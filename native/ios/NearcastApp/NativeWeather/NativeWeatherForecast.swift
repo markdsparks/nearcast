@@ -4,8 +4,20 @@ import CoreFoundation
 /// Full app weather, separate from the intentionally compact widget snapshot.
 /// Temperatures and wind use the requested system; precipitation is always mm.
 struct NativeForecastPoint: Codable, Sendable, Identifiable {
+    enum Origin: String, Codable, Sendable {
+        case modeledCurrent = "modeled-current"
+        case hourlyForecast = "hourly-forecast"
+        case quarterHourForecast = "15-minute-forecast"
+    }
+
     var id: Date { date }
     let date: Date
+    /// Explicit provenance survives both the normalized service and local
+    /// Codable snapshots. A missing legacy origin is deliberately unknown.
+    let origin: Origin?
+    /// Accumulation interval, not an assumed hourly rate. Unknown or invalid
+    /// intervals remain unavailable for active precipitation presentation.
+    let precipitationIntervalSeconds: Double?
     let temperature: Double?
     let apparentTemperature: Double?
     let rainProbability: Double?
@@ -25,14 +37,27 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
     /// Cloud density is useful visual context, but it never changes the
     /// deterministic condition label by itself.
     let cloudCover: Double?
+    /// Optional atmosphere enrichment already supplied by the forecast API.
+    /// Cloud layers are percentages; radiation is W/m² in either unit system.
+    let lowCloudCover: Double?
+    let midCloudCover: Double?
+    let highCloudCover: Double?
+    let shortwaveRadiation: Double?
+    let directRadiation: Double?
+    let diffuseRadiation: Double?
 
     init(date: Date, temperature: Double? = nil, apparentTemperature: Double? = nil,
          rainProbability: Double? = nil, precipitationMM: Double? = nil,
          windSpeed: Double? = nil, windGusts: Double? = nil, uvIndex: Double? = nil,
          weatherCode: Int? = nil, isDay: Bool? = nil, thunderPossible: Bool = false, rawWeatherCode: Int? = nil,
          relativeHumidity: Double? = nil, dewPoint: Double? = nil, visibilityMeters: Double? = nil, windDirection: Double? = nil,
-         cloudCover: Double? = nil) {
+         cloudCover: Double? = nil, lowCloudCover: Double? = nil, midCloudCover: Double? = nil,
+         highCloudCover: Double? = nil, shortwaveRadiation: Double? = nil,
+         directRadiation: Double? = nil, diffuseRadiation: Double? = nil,
+         origin: Origin? = nil, precipitationIntervalSeconds: Double? = nil) {
         self.date = date
+        self.origin = origin
+        self.precipitationIntervalSeconds = Self.valid(precipitationIntervalSeconds, in: 60...3600)
         self.temperature = temperature
         self.apparentTemperature = apparentTemperature
         self.rainProbability = rainProbability
@@ -49,6 +74,16 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
         self.visibilityMeters = visibilityMeters
         self.windDirection = windDirection
         self.cloudCover = cloudCover.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil }
+        self.lowCloudCover = Self.valid(lowCloudCover, in: 0...100)
+        self.midCloudCover = Self.valid(midCloudCover, in: 0...100)
+        self.highCloudCover = Self.valid(highCloudCover, in: 0...100)
+        self.shortwaveRadiation = Self.valid(shortwaveRadiation, in: 0...2000)
+        self.directRadiation = Self.valid(directRadiation, in: 0...2000)
+        self.diffuseRadiation = Self.valid(diffuseRadiation, in: 0...2000)
+    }
+
+    private static func valid(_ value: Double?, in range: ClosedRange<Double>) -> Double? {
+        value.flatMap { $0.isFinite && range.contains($0) ? $0 : nil }
     }
 
     var conditionLabel: String {
@@ -63,6 +98,33 @@ struct NativeForecastPoint: Codable, Sendable, Identifiable {
         temperature != nil || apparentTemperature != nil || rainProbability != nil || precipitationMM != nil
             || windSpeed != nil || windGusts != nil || uvIndex != nil || weatherCode != nil
             || relativeHumidity != nil || dewPoint != nil || visibilityMeters != nil || windDirection != nil
+    }
+}
+
+/// A small, shared presentation helper for wind values that came from the
+/// forecast provider. Directions describe where the wind comes *from*; that
+/// convention is kept explicit in accessibility copy wherever it is shown.
+enum NativeWindDirection {
+    private static let compassPoints = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+    ]
+
+    private static let spokenCompassPoints = [
+        "north", "north-northeast", "northeast", "east-northeast",
+        "east", "east-southeast", "southeast", "south-southeast",
+        "south", "south-southwest", "southwest", "west-southwest",
+        "west", "west-northwest", "northwest", "north-northwest"
+    ]
+
+    static func compassPoint(_ degrees: Double?) -> String? {
+        guard let degrees, degrees.isFinite, (0...360).contains(degrees) else { return nil }
+        return compassPoints[Int((degrees / 22.5).rounded()) % compassPoints.count]
+    }
+
+    static func spokenCompassPoint(_ degrees: Double?) -> String? {
+        guard let degrees, degrees.isFinite, (0...360).contains(degrees) else { return nil }
+        return spokenCompassPoints[Int((degrees / 22.5).rounded()) % spokenCompassPoints.count]
     }
 }
 
@@ -126,6 +188,37 @@ struct NativeWeatherForecast: Codable, Sendable {
         days.first { calendar.isDate($0.date, inSameDayAs: date) }
     }
 
+    /// A rolling window is elapsed time, not a civil day or a count of rows.
+    /// DST repeats keep their distinct timestamps, and provider gaps do not
+    /// silently stretch "24 hours" into a longer forecast.
+    func rollingHourlyWindow(now: Date, hours count: Int = 24) -> DateInterval {
+        let start = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+        return DateInterval(start: start, duration: Double(min(14 * 24, max(1, count))) * 3_600)
+    }
+
+    func rollingHours(now: Date, hours count: Int = 24, includeEarlierToday: Bool = false) -> [NativeForecastPoint] {
+        let window = rollingHourlyWindow(now: now, hours: count)
+        let start = includeEarlierToday ? calendar.startOfDay(for: now) : window.start
+        return hours.filter {
+            $0.origin != .quarterHourForecast && $0.hasReadings && $0.date >= start && $0.date < window.end
+        }.sorted { $0.date < $1.date }
+    }
+
+    func hasMoreRollingHours(now: Date, hours count: Int) -> Bool {
+        guard count < 14 * 24 else { return false }
+        let end = rollingHourlyWindow(now: now, hours: count).end
+        let limit = rollingHourlyWindow(now: now, hours: 14 * 24).end
+        return hours.contains { $0.hasReadings && $0.origin != .quarterHourForecast && $0.date >= end && $0.date < limit }
+    }
+
+    func isRepeatedLocalHour(_ date: Date) -> Bool {
+        let components: Set<Calendar.Component> = [.year, .month, .day, .hour]
+        let value = calendar.dateComponents(components, from: date)
+        return [-3_600.0, 3_600.0].contains { offset in
+            calendar.dateComponents(components, from: date.addingTimeInterval(offset)) == value
+        }
+    }
+
     // Presentation windows retain actual service timestamps, including local
     // midnight and the 25th hour of a fall-back day. No samples are synthesized.
     func previewTrendHours(on day: Date, now: Date) -> [NativeForecastPoint] {
@@ -134,11 +227,36 @@ struct NativeWeatherForecast: Codable, Sendable {
         return Array(hours.filter { $0.date >= start }.prefix(24))
     }
 
+    /// Home's compact outlook has room to give "Now" useful context. It may
+    /// retain a small number of provider-supplied earlier hourly *forecast*
+    /// values, but it never synthesizes intervals or treats them as observed
+    /// history. The analytical Hourly surface owns its broader lookback.
+    func outlookTrendHours(on day: Date, now: Date, earlierHourCount: Int = 2) -> [NativeForecastPoint] {
+        guard calendar.isDate(day, inSameDayAs: now) else { return hours(on: day) }
+        let currentHour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+        // Never reach into a prior civil day merely to fill the Home lookback.
+        // Midnight gets no invented predecessor; future coverage can still
+        // continue across the following midnight.
+        let earlier = Array(hours(on: day).filter { $0.date < currentHour }.suffix(max(0, earlierHourCount)))
+        let onward = Array(hours.filter { $0.date >= currentHour }.prefix(24))
+        return earlier + onward
+    }
+
     func previewQuarterHours(on day: Date, now: Date) -> [NativeForecastPoint] {
         let today = calendar.isDate(day, inSameDayAs: now)
         return quarterHours.filter {
             (today || calendar.isDate($0.date, inSameDayAs: day)) && $0.date.addingTimeInterval(900) > now
         }
+    }
+
+    /// Native Hourly distinguishes a rolling near-term read from an explicitly
+    /// selected civil day. Both use only the real six-hour service feed.
+    func hourlyQuarterHours(on day: Date?, now: Date) -> [NativeForecastPoint] {
+        quarterHours.filter { point in
+            point.hasReadings && point.date.addingTimeInterval(900) > now
+                && point.date < now.addingTimeInterval(6 * 3_600)
+                && (day.map { calendar.isDate(point.date, inSameDayAs: $0) } ?? true)
+        }.sorted { $0.date < $1.date }
     }
 
     func startsPreviewDaySection(_ date: Date, after previous: Date?, selectedDay: Date) -> Bool {
@@ -150,8 +268,113 @@ struct NativeWeatherForecast: Codable, Sendable {
     }
 }
 
+/// The hero and immersive sky share one freshness decision. Active weather
+/// treatment is narrower than a forecast headline: only an explicitly
+/// identified current model point can support it. This is not radar observation.
+struct NativeCurrentWeatherDecision: Sendable {
+    let acceptedPoint: NativeForecastPoint?
+    private let evaluatedAt: Date
+
+    init(forecast: NativeWeatherForecast?, now: Date) {
+        self.init(point: forecast?.current, now: now)
+    }
+
+    init(point: NativeForecastPoint?, now: Date) {
+        evaluatedAt = now
+        acceptedPoint = point.flatMap { value in
+            let age = now.timeIntervalSince(value.date)
+            return age >= -5 * 60 && age < 90 * 60 ? value : nil
+        }
+    }
+
+    var hasFreshReading: Bool { acceptedPoint != nil }
+
+    /// A wet deterministic model and unlikely matching probability guidance
+    /// describe an uncertain signal. Preserve both readings; only presentation
+    /// is reconciled. Nearby temperature observations cannot settle this.
+    var hasConflictingPrecipitationGuidance: Bool {
+        guard let point = acceptedPoint, point.origin == .modeledCurrent,
+              let chance = point.rainProbability,
+              chance.isFinite, (0..<30).contains(chance),
+              Self.isPrecipitationCode(point.weatherCode) else { return false }
+        return true
+    }
+
+    var presentationWeatherCode: Int? {
+        guard let point = acceptedPoint else { return nil }
+        guard hasConflictingPrecipitationGuidance else { return point.weatherCode }
+        return NearcastForecastSemantics.currentConditionCode(rawCode: point.weatherCode,
+            precipitationAmount: point.precipitationMM, intervalSeconds: point.precipitationIntervalSeconds,
+            cloudCover: point.cloudCover, modeledPrecipitationChance: point.rainProbability)
+    }
+
+    var conditionLabel: String {
+        guard hasConflictingPrecipitationGuidance else {
+            return NativeWeatherCondition.label(acceptedPoint?.weatherCode)
+        }
+        switch acceptedPoint?.rawWeatherCode ?? acceptedPoint?.weatherCode {
+        case 71, 73, 75, 77, 85, 86: return "Snow possible"
+        case 56, 57, 66, 67: return "Freezing precipitation possible"
+        case 95, 96, 99: return "Thunderstorms possible"
+        default: return "Rain possible"
+        }
+    }
+
+    var conditionExplanation: String? {
+        guard hasConflictingPrecipitationGuidance,
+              let chance = acceptedPoint?.rainProbability else { return nil }
+        return "The current weather model suggests precipitation, but matching forecast guidance gives a \(Int(chance.rounded()))% chance. These signals disagree; precipitation has not been confirmed at this location."
+    }
+
+    private static func isPrecipitationCode(_ code: Int?) -> Bool {
+        code.map { (51...86).contains($0) || [95, 96, 99].contains($0) } ?? false
+    }
+
+    var liquidRainRateMMPerHour: Double? {
+        guard !hasConflictingPrecipitationGuidance, let point = freshModeledPoint,
+              let code = point.weatherCode,
+              [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].contains(code) else { return nil }
+        // Freezing precipitation and snow use separate treatment. Raw codes,
+        // probability, and thunderPossible cannot promote a dry normalized sky.
+        return precipitationRate(for: point, minimum: 0.2)
+    }
+
+    /// Liquid-equivalent precipitation, not snowfall depth or a snow-to-water
+    /// ratio. Cold temperature alone never establishes that snow is falling.
+    var snowWaterEquivalentRateMMPerHour: Double? {
+        guard !hasConflictingPrecipitationGuidance, let point = freshModeledPoint, let code = point.weatherCode,
+              [71, 73, 75, 77, 85, 86].contains(code) else { return nil }
+        return precipitationRate(for: point, minimum: 0.05)
+    }
+
+    /// A qualified current thunderstorm may shape the cloud atmosphere even
+    /// when no credible rain accumulation is available. It does not establish
+    /// storm severity, a lightning observation, or falling rain by itself.
+    var hasCurrentThunderstorm: Bool {
+        guard !hasConflictingPrecipitationGuidance,
+              let code = freshModeledPoint?.weatherCode else { return false }
+        return [95, 96, 99].contains(code)
+    }
+
+    private var freshModeledPoint: NativeForecastPoint? {
+        guard let point = acceptedPoint, point.origin == .modeledCurrent,
+              // A saved headline can remain useful after active weather has
+              // stopped being a timely depiction of conditions now.
+              evaluatedAt.timeIntervalSince(point.date) < 30 * 60 else { return nil }
+        return point
+    }
+
+    private func precipitationRate(for point: NativeForecastPoint, minimum: Double) -> Double? {
+        guard let interval = point.precipitationIntervalSeconds,
+              interval.isFinite, (60...3600).contains(interval),
+              let amount = point.precipitationMM, amount.isFinite, amount >= 0 else { return nil }
+        let rate = amount * 3600 / interval
+        return rate.isFinite && rate >= minimum ? rate : nil
+    }
+}
+
 enum NativeForecastError: Error, LocalizedError {
-    case invalidCoordinates, invalidPayload, mismatchedPlace, mismatchedUnits, invalidProvenance, invalidTimezone, emptyForecast
+    case invalidCoordinates, invalidPayload, mismatchedPlace, mismatchedUnits, invalidProvenance, invalidTimezone, emptyForecast, staleForecast
     case httpStatus(Int)
 
     var errorDescription: String? {
@@ -162,13 +385,14 @@ enum NativeForecastError: Error, LocalizedError {
         case .invalidProvenance: return "The weather response could not be verified."
         case .invalidTimezone: return "The weather's local time zone was unavailable."
         case .emptyForecast: return "No forecast readings were available."
+        case .staleForecast: return "The weather response is too old to show."
         case .httpStatus: return "The weather service is temporarily unavailable."
         case .invalidPayload: return "The weather response could not be read."
         }
     }
 }
 
-private enum NativeWeatherCondition {
+enum NativeWeatherCondition {
     static func isThunder(_ code: Int?) -> Bool { code.map { [95, 96, 99].contains($0) } ?? false }
 
     static func label(_ code: Int?) -> String {
@@ -275,10 +499,23 @@ private enum NativeForecastDecoder {
         }
 
         var semanticHours: [Date: NearcastForecastSemanticHour] = [:]
-        func point(_ values: Object, date: Date, interval: TimeInterval, isCurrent: Bool = false, localTime: String? = nil) -> NativeForecastPoint {
+        func point(_ values: Object, units: Object?, date: Date, interval: TimeInterval, isCurrent: Bool = false,
+                   localTime: String? = nil, origin: NativeForecastPoint.Origin? = nil,
+                   precipitationIntervalSeconds: Double? = nil,
+                   matchingCurrentChance: Double? = nil) -> NativeForecastPoint {
+            // Optional enrichment with absent/unrecognized units is ignored,
+            // not a reason to fail otherwise useful temperature/forecast data.
+            func radiation(_ key: String) -> Double? {
+                guard units?[key] as? String == "W/m²" else { return nil }
+                return number(values[key]).flatMap { (0...2000).contains($0) ? $0 : nil }
+            }
+            func cloudLayer(_ key: String) -> Double? {
+                guard units?[key] as? String == "%" else { return nil }
+                return probability(values[key])
+            }
             let rawCode = code(values["weather_code"])
             let amount = nonnegative(values["precipitation"])
-            let chance = probability(values["precipitation_probability"])
+            let chance = probability(values["precipitation_probability"]) ?? matchingCurrentChance
             let cloud = probability(values["cloud_cover"])
             let isDay = number(values["is_day"]).flatMap { $0 == 1 ? true : $0 == 0 ? false : nil }
             var resolvedCode = rawCode
@@ -304,7 +541,11 @@ private enum NativeForecastDecoder {
                 rawWeatherCode: rawCode, relativeHumidity: probability(values["relative_humidity_2m"]),
                 dewPoint: number(values["dew_point_2m"]), visibilityMeters: nonnegative(values["visibility"]),
                 windDirection: number(values["wind_direction_10m"]).flatMap { (0...360).contains($0) ? $0 : nil },
-                cloudCover: cloud)
+                cloudCover: cloud, lowCloudCover: cloudLayer("cloud_cover_low"),
+                midCloudCover: cloudLayer("cloud_cover_mid"), highCloudCover: cloudLayer("cloud_cover_high"),
+                shortwaveRadiation: radiation("shortwave_radiation"), directRadiation: radiation("direct_radiation"),
+                diffuseRadiation: radiation("diffuse_radiation"), origin: origin,
+                precipitationIntervalSeconds: precipitationIntervalSeconds)
         }
 
         func points(_ section: String, interval: TimeInterval, limit: Int) -> [NativeForecastPoint] {
@@ -319,7 +560,9 @@ private enum NativeForecastDecoder {
                 for (key, value) in series where key != "time" {
                     if let array = value as? [Any], index < array.count { row[key] = array[index] }
                 }
-                let reading = point(row, date: date, interval: interval, localTime: raw as? String)
+                let reading = point(row, units: payload[section + "_units"] as? Object, date: date, interval: interval,
+                    localTime: raw as? String, origin: section == "minutely_15" ? .quarterHourForecast : .hourlyForecast,
+                    precipitationIntervalSeconds: interval)
                 return reading.hasReadings ? reading : nil
             }.sorted { $0.date < $1.date }
         }
@@ -327,7 +570,8 @@ private enum NativeForecastDecoder {
         let hours = points("hourly", interval: 3600, limit: 400)
         // Only provider-supplied quarter-hours: no interpolation from hourly.
         // Retain the containing interval and at most the next six hours.
-        let quarterHours = points("minutely_15", interval: 900, limit: 100).filter {
+        let allQuarterHours = points("minutely_15", interval: 900, limit: 100)
+        let quarterHours = allQuarterHours.filter {
             $0.date.addingTimeInterval(900) > now && $0.date < now.addingTimeInterval(6 * 3600)
         }
         var current: NativeForecastPoint?
@@ -335,7 +579,18 @@ private enum NativeForecastDecoder {
            let date = clock.date(rawCurrent["time"] as? String, latestAt: now), date <= now,
            date >= generatedAt.addingTimeInterval(-75 * 60), date <= generatedAt.addingTimeInterval(60) {
             let interval = nonnegative(rawCurrent["interval"]) ?? 900
-            let reading = point(rawCurrent, date: date, interval: min(3600, max(60, interval)), isCurrent: true)
+            let origin = (rawCurrent["basis"] as? String).flatMap(NativeForecastPoint.Origin.init(rawValue:))
+            // Match the model reading's actual timestamp, never the next wet
+            // interval or the time this response happened to be decoded.
+            let matchingChance = allQuarterHours.last {
+                $0.date <= date && $0.date.addingTimeInterval(900) > date
+            }?.rainProbability ?? hours.last {
+                $0.date <= date && $0.date.addingTimeInterval(3600) > date
+            }?.rainProbability
+            let reading = point(rawCurrent, units: payload["current_units"] as? Object, date: date,
+                interval: min(3600, max(60, interval)), isCurrent: true, origin: origin,
+                precipitationIntervalSeconds: number(rawCurrent["interval"]),
+                matchingCurrentChance: origin == .modeledCurrent ? matchingChance : nil)
             current = reading.hasReadings ? reading : nil
         }
         if current == nil {

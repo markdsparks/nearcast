@@ -7,6 +7,12 @@ final class NearcastAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Register WatchConnectivity before a native-only scene or a WebView
+        // exists. A freshly installed Watch can request the durable snapshot
+        // while the phone is otherwise background-launched.
+        Task { @MainActor in
+            NativeWatchSnapshotSync.shared.activate()
+        }
         if let notification = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
             Task { @MainActor in
                 NativeNotificationRouter.shared.route(userInfo: notification)

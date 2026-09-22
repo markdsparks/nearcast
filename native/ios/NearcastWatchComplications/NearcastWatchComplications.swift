@@ -1165,7 +1165,9 @@ private func makeEntry(
         planState = .unavailable
     } else if !snapshot.hasPlan || snapshot.planAvailable == false {
         planState = .empty
-    } else if age(at: date, savedAt: snapshot.planSavedTime) > planStaleAfter {
+    } else if snapshot.planEndAt.map({ $0 <= date.timeIntervalSince1970 }) == true {
+        planState = .empty
+    } else if age(at: date, savedAt: snapshot.planSavedTime) >= planStaleAfter {
         planState = .stale
     } else {
         planState = .fresh
@@ -1223,11 +1225,12 @@ private func complicationTimelineDates(snapshot: NearcastWidgetSnapshot, now: Da
     if let timeline = snapshot.timeline, !timeline.isEmpty {
         let timestampedRows = timeline.compactMap(\.startsAt).sorted()
         if !timestampedRows.isEmpty {
-            dates.append(contentsOf: timestampedRows.compactMap { timestamp in
+            dates.append(contentsOf: timestampedRows.compactMap { timestamp -> Date? in
+                guard timestamp.isFinite else { return nil }
                 let date = Date(timeIntervalSince1970: timestamp)
                 guard date > now, date <= horizonEnd else { return nil }
                 return date
-            })
+            }.prefix(24))
         } else {
             let lastOffset = min(23, timeline.map(\.offsetHours).max() ?? 0)
             if lastOffset > 0 {
@@ -1238,31 +1241,49 @@ private func complicationTimelineDates(snapshot: NearcastWidgetSnapshot, now: Da
         }
     }
 
-    let staleDate = complicationWeatherValidUntil(snapshot)
-    if staleDate > now {
-        dates.append(staleDate)
-    }
-
-    if let eventEndAt = snapshot.canonicalEventEndAt {
-        let transition = Date(timeIntervalSince1970: eventEndAt + 1)
-        if transition > now { dates.append(transition) }
-    }
-
-    if snapshot.hasCurrentOfficialAlert(at: now.timeIntervalSince1970) {
-        let alertDeadline = snapshot.alertExpiresAt
-            ?? snapshot.alertSavedAt.map { $0 + nearcastWidgetAlertWithoutExpiryTTL }
-        if let alertDeadline {
-            let transition = Date(timeIntervalSince1970: alertDeadline + 1)
-            if transition > now { dates.append(transition) }
-        }
-    }
-
-    // Coalesce the half-hour safety entry with a forecast boundary when they
-    // are effectively the same time.
-    return dates.sorted().reduce(into: [Date]()) { result, date in
+    // Ordinary projections may coalesce with the half-hour safety entry.
+    // Hard state transitions cannot: an expiry seconds after an hourly entry
+    // must not leave its previous state visible for another full hour.
+    dates = dates.sorted().reduce(into: [Date]()) { result, date in
         guard result.last.map({ date.timeIntervalSince($0) >= 60 }) ?? true else { return }
         result.append(date)
     }
+
+    var deadlines: [Date] = []
+    func appendDeadline(_ timestamp: TimeInterval?, allowsBeyondHorizon: Bool = false) {
+        guard let timestamp, timestamp.isFinite else { return }
+        let date = Date(timeIntervalSince1970: timestamp)
+        guard date > now, allowsBeyondHorizon || date <= horizonEnd else { return }
+        deadlines.append(date)
+    }
+
+    // Retain the small fixed set of hard expiries beyond the projection
+    // horizon; otherwise a long-lived warning could remain painted forever
+    // when the system defers a subsequent provider launch.
+    appendDeadline(complicationWeatherValidUntil(snapshot).timeIntervalSince1970, allowsBeyondHorizon: true)
+    if snapshot.canonicalEventBrief(at: now.timeIntervalSince1970) != nil {
+        appendDeadline(snapshot.canonicalEventStartAt)
+        appendDeadline(snapshot.canonicalEventEndAt, allowsBeyondHorizon: true)
+    }
+
+    if snapshot.hasCurrentOfficialAlert(at: now.timeIntervalSince1970) {
+        appendDeadline(snapshot.alertStartsAt)
+        let alertDeadline = snapshot.alertExpiresAt
+            ?? snapshot.alertSavedAt.map { $0 + nearcastWidgetAlertWithoutExpiryTTL }
+        appendDeadline(alertDeadline, allowsBeyondHorizon: true)
+    }
+
+    if snapshot.hasPlan {
+        appendDeadline(snapshot.planStartAt)
+        appendDeadline(snapshot.planEndAt, allowsBeyondHorizon: true)
+        if snapshot.planSavedTime > 0 {
+            appendDeadline(snapshot.planSavedTime + planStaleAfter, allowsBeyondHorizon: true)
+        }
+    }
+
+    // Deduplicate only identical instants. Distinct hard deadlines—even one
+    // second apart—represent distinct states and must survive independently.
+    return Array(Set(dates + deadlines)).sorted()
 }
 
 /// Forecast rows are truthful until the final row's interval ends. This is a
@@ -1533,6 +1554,8 @@ private enum NearcastWatchWeatherRefresh {
             var weather = NearcastWidgetSnapshot.fallback
             weather.savedAt = refreshedAt
             weather.weatherSavedAt = weatherSavedAt
+            weather.weatherLocation = NearcastCompanionLocation(latitude: requestedPlace.latitude,
+                longitude: requestedPlace.longitude, resolvedAt: refreshedAt)
             weather.isAvailable = true
             weather.placeName = requestedPlace.displayLabel
             weather.placeTimezone = forecast.timezone ?? fallback.placeTimezone
@@ -1626,6 +1649,7 @@ private enum NearcastWatchWeatherRefresh {
         }
         updated.savedAt = weather.savedAt
         updated.weatherSavedAt = weather.weatherSavedAt
+        updated.weatherLocation = weather.weatherLocation
         updated.isAvailable = true
         updated.placeName = requestedPlace.displayLabel
         updated.placeTimezone = weather.placeTimezone ?? latest.placeTimezone

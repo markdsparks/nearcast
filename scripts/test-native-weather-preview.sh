@@ -13,6 +13,7 @@ xcrun swiftc \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherEssentials.swift" \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeEssentialsRepository.swift" \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherPreviewContext.swift" \
+  "$ROOT/native/ios/NearcastApp/NativeWeather/NativeAppRouter.swift" \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherPreviewModel.swift" \
   "$ROOT/scripts/native-weather-preview-test.swift" \
   -o "$TEST_ROOT/native-weather-preview-test"

@@ -14,6 +14,9 @@ struct NativePlacesSettingsSheet: View {
     @ObservedObject var model: NativePlacesControlsModel
     let onDone: () -> Void
     let onOpenExisting: () -> Void
+    /// Compatibility hosts still show their retained settings bridge.
+    /// Native-only Dev hides it rather than advertising an old app route.
+    let showsExistingAppActions: Bool
     let onOpenExistingMap: (() -> Void)?
     let onAskAboutPlace: ((NativePreviewPlace) -> Void)?
     let nativeMapContext: NativePreviewContext?
@@ -40,6 +43,7 @@ struct NativePlacesSettingsSheet: View {
         initialTab: NativePlacesSettingsTab = .places,
         onDone: @escaping () -> Void,
         onOpenExisting: @escaping () -> Void,
+        showsExistingAppActions: Bool = true,
         onOpenExistingMap: (() -> Void)? = nil,
         onAskAboutPlace: ((NativePreviewPlace) -> Void)? = nil,
         nativeMapContext: NativePreviewContext? = nil,
@@ -51,6 +55,7 @@ struct NativePlacesSettingsSheet: View {
         self.model = model
         self.onDone = onDone
         self.onOpenExisting = onOpenExisting
+        self.showsExistingAppActions = showsExistingAppActions
         self.onOpenExistingMap = onOpenExistingMap
         self.onAskAboutPlace = onAskAboutPlace
         self.nativeMapContext = nativeMapContext
@@ -130,7 +135,9 @@ struct NativePlacesSettingsSheet: View {
                 }
                 Button("Cancel", role: .cancel) { removeTarget = nil }
             } message: { _ in
-                Text(model.source?.owner == "native"
+                Text(NativeRuntimeConfiguration.isNativeOnlyExperience
+                    ? "This removes the place from your saved list. Your plans stay saved."
+                    : model.source?.owner == "native"
                     ? "Your plans stay saved. Watching this saved place will stop after notification settings finish syncing."
                     : "Your plans stay saved. Watching this saved place for weather changes will stop.")
             }
@@ -165,7 +172,9 @@ struct NativePlacesSettingsSheet: View {
                         { showingNativeMap = false; action(context.selectedPlace) }
                     },
                     onClose: { showingNativeMap = false },
-                    onExistingMap: { showingNativeMap = false; onOpenExistingMap?() })
+                    onExistingMap: onOpenExistingMap.map { action in
+                        { showingNativeMap = false; action() }
+                    })
                     .id(context.selectedPlace.coordinateIdentity)
             }
         }
@@ -216,8 +225,10 @@ struct NativePlacesSettingsSheet: View {
                         .foregroundStyle(.secondary)
                     Button("Try again") { Task { await model.reload() } }
                         .buttonStyle(.borderedProminent)
-                    Button("Open existing Nearcast", action: onOpenExisting)
-                        .buttonStyle(.bordered)
+                    if showsExistingAppActions {
+                        Button("Open existing Nearcast", action: onOpenExisting)
+                            .buttonStyle(.bordered)
+                    }
                     if nativeMapContext != nil, onOpenExistingMap != nil {
                         Button("Try native weather map") { showingNativeMap = true }
                             .buttonStyle(.bordered)
@@ -504,24 +515,34 @@ struct NativePlacesSettingsSheet: View {
             } footer: {
                 Text("Try native radar and model forecasts at your selected place. The regular Map stays unchanged while required layers are migrated. Radar Lab is a separate fixed-location diagnostic.")
             }
-            Section {
-                Button(action: onOpenExisting) {
-                    HStack(alignment: .center, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Open existing settings").font(.body.weight(.semibold))
-                            Text("Plans, notifications and other options.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+            if showsExistingAppActions {
+                Section {
+                    Button(action: onOpenExisting) {
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Open existing settings").font(.body.weight(.semibold))
+                                Text("Plans, notifications and other options.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.up.right").font(.subheadline)
                         }
-                        .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.right").font(.subheadline)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .disabled(model.isBusy)
                 }
-                .buttonStyle(.plain)
-                .disabled(model.isBusy)
+            }
+            Section("About") {
+                NavigationLink {
+                    NativeAcknowledgmentsView()
+                } label: {
+                    Label("Acknowledgments", systemImage: "doc.text")
+                        .frame(minHeight: 44)
+                }
             }
         }
         .listStyle(.insetGrouped)
@@ -652,6 +673,336 @@ struct NativePlacesSettingsSheet: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle(kind.title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// First-run native Places setup. It deliberately starts with a location that
+/// this native process resolved after a direct user action; it never converts
+/// a weather-preview cache into saved family places. Existing-app import stays
+/// a separate, explicit option at the bottom of this sheet.
+struct NativePlacesBootstrapSheet: View {
+    @ObservedObject var placesOwner: NativePlacesOwnerController
+    let onDone: () -> Void
+    var showsLegacyImport: Bool = true
+    let onImportExisting: () -> Void
+
+    @State private var query = ""
+    @State private var results: [NativeManagedPlace] = []
+    @State private var pendingPlace: NativeManagedPlace?
+    @State private var isSearching = false
+    @State private var isLocating = false
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+    @State private var showStartConfirmation = false
+
+    private var canStart: Bool {
+        placesOwner.status == "unmigrated" && !placesOwner.isActivating && !isCreating
+    }
+
+    private var cleanQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if placesOwner.status == "owned" {
+                    ContentUnavailableView(
+                        "Native Places are ready",
+                        systemImage: "checkmark.circle.fill",
+                        description: Text("Your saved places are now owned by native Nearcast."))
+                } else if placesOwner.status == "blocked" {
+                    blockedContent
+                } else {
+                    setupContent
+                }
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Set up Places")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(placesOwner.status == "owned" ? "Done" : "Cancel", action: onDone)
+                        .fontWeight(.semibold)
+                        .disabled(isCreating)
+                }
+            }
+            .task(id: query) { await searchForStartingPlace() }
+            .confirmationDialog("Start native saved places?", isPresented: $showStartConfirmation,
+                titleVisibility: .visible, presenting: pendingPlace) { place in
+                    Button("Start with \(place.displayName)") {
+                        Task { await createNativePlaces(startingAt: place) }
+                    }
+                    Button("Cancel", role: .cancel) { pendingPlace = nil }
+                } message: { place in
+                    Text("This starts a new native Places list with \(place.displayName). It does not copy the temporary weather preview or change saved places in the existing app. You can add family places next.")
+                }
+        }
+        .interactiveDismissDisabled(isCreating)
+    }
+
+    private var setupContent: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Start with one place", systemImage: "mappin.and.ellipse")
+                        .font(.body.weight(.semibold))
+                    Text("Choose your current location or search for a city. Nearcast will create a new native saved-places list only after you confirm the exact place.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section {
+                Button {
+                    Task { await resolveCurrentLocation() }
+                } label: {
+                    HStack(spacing: 12) {
+                        if isLocating { ProgressView() }
+                        else {
+                            Image(systemName: "location.fill")
+                                .foregroundStyle(.tint)
+                                .accessibilityHidden(true)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(isLocating ? "Finding your location…" : "Use my current location")
+                                .font(.body.weight(.semibold))
+                            Text("Nearcast asks for location only after you tap this.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canStart || isLocating || isSearching)
+            }
+
+            Section("Or search for a place") {
+                TextField("City or ZIP code", text: $query)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .disabled(!canStart || isLocating)
+
+                if cleanQuery.count == 1 {
+                    Text("Enter at least two characters to search.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else if isSearching {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Finding places…").foregroundStyle(.secondary)
+                    }
+                } else if cleanQuery.count >= 2, results.isEmpty {
+                    Text("No places found. Try a city with its state or country, or a ZIP code.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(results) { place in
+                        Button { choose(place) } label: { placeLabel(place) }
+                            .buttonStyle(.plain)
+                            .disabled(!canStart)
+                    }
+                }
+            }
+
+            if let errorMessage {
+                Section {
+                    Label(errorMessage, systemImage: "exclamationmark.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if showsLegacyImport { Section {
+                Button(action: onImportExisting) {
+                    HStack(alignment: .center, spacing: 12) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Import existing saved places instead")
+                                .font(.body.weight(.semibold))
+                            Text("Use the one-time verified handover if you want to keep your older family-place list and settings.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(minHeight: 54)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isCreating || isLocating)
+            } footer: {
+                Text("Import is optional. Starting native places above never copies temporary preview data.")
+            } }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    private var blockedContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Image(systemName: "lock.trianglebadge.exclamationmark")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text("Saved places need attention")
+                    .font(.title2.weight(.bold))
+                Text(placesOwner.message ?? "Nearcast could not verify existing native places, so it will not replace them with a new list.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Check again") { placesOwner.refreshFromDisk() }
+                    .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(28)
+        }
+    }
+
+    private func placeLabel(_ place: NativeManagedPlace) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "mappin.circle.fill")
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(place.displayName).font(.body.weight(.semibold))
+                let subtitle = [place.admin1, place.country].filter { !$0.isEmpty }.joined(separator: ", ")
+                if !subtitle.isEmpty {
+                    Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityHint("Choose this as the first native saved place")
+    }
+
+    private func searchForStartingPlace() async {
+        let queryAtStart = cleanQuery
+        results = []
+        guard queryAtStart.count >= 2 else {
+            isSearching = false
+            return
+        }
+        guard canStart, !isLocating else { return }
+        isSearching = true
+        errorMessage = nil
+        defer {
+            if cleanQuery == queryAtStart { isSearching = false }
+        }
+        do {
+            try await Task.sleep(for: .milliseconds(250))
+            try Task.checkCancellation()
+            let found = try await placesOwner.searchForNativeBootstrap(query: queryAtStart)
+            guard !Task.isCancelled, cleanQuery == queryAtStart else { return }
+            results = found
+        } catch is CancellationError { }
+        catch {
+            guard cleanQuery == queryAtStart else { return }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func resolveCurrentLocation() async {
+        guard canStart, !isLocating else { return }
+        isLocating = true
+        errorMessage = nil
+        defer { isLocating = false }
+        do {
+            let place = try await placesOwner.currentLocationForNativeBootstrap()
+            guard !Task.isCancelled else { return }
+            choose(place)
+        } catch is CancellationError { }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    private func choose(_ place: NativeManagedPlace) {
+        guard canStart, place.isValid, place.previewPlace.isValid else { return }
+        pendingPlace = place
+        showStartConfirmation = true
+    }
+
+    private func createNativePlaces(startingAt place: NativeManagedPlace) async {
+        guard canStart else { return }
+        isCreating = true
+        errorMessage = nil
+        defer { isCreating = false }
+        do {
+            _ = try await placesOwner.createNativePlaces(startingAt: place)
+            guard placesOwner.status == "owned" else {
+                errorMessage = "Nearcast could not verify the new saved places. Nothing else was changed."
+                return
+            }
+            onDone()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct NativeAcknowledgmentsView: View {
+    private enum Notice: String, CaseIterable, Identifiable {
+        case sunCalc = "SunCalc-LICENSE.txt"
+        case mapLibre = "MapLibre-LICENSE.md"
+        case mapLibreCore = "MapLibre-core-NOTICES.md"
+        case mapLibreIOS = "MapLibre-iOS-NOTICES.md"
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .sunCalc: "SunCalc"
+            case .mapLibre: "MapLibre"
+            case .mapLibreCore: "MapLibre Core notices"
+            case .mapLibreIOS: "MapLibre iOS notices"
+            }
+        }
+
+        var text: String? {
+            guard let url = Bundle.main.url(forResource: rawValue, withExtension: nil) else { return nil }
+            return try? String(contentsOf: url, encoding: .utf8)
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(Notice.allCases) { notice in
+                    NavigationLink(notice.title) {
+                        ScrollView {
+                            Text(verbatim: notice.text ?? "This acknowledgment could not be loaded.")
+                                .font(.footnote)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(20)
+                        }
+                        .navigationTitle(notice.title)
+                        .navigationBarTitleDisplayMode(.inline)
+                    }
+                }
+            } footer: {
+                Text("Nearcast includes these open-source components and adaptations. Their licenses and notices are reproduced here.")
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Acknowledgments")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

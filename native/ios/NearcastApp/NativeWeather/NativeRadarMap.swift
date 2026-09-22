@@ -1,4 +1,6 @@
 import SwiftUI
+import Foundation
+import CoreFoundation
 import MapLibre
 
 /// Only already-authorized tile templates enter this renderer. Configuration and
@@ -38,6 +40,7 @@ struct NativeRadarViewport: Equatable, Sendable {
 /// its size (and therefore its camera) when the timeline's content changes.
 struct NativeRadarMap: UIViewRepresentable {
     let place: NativePreviewPlace
+    let initialContext: NativeRadarOpeningContext?
     let savedPlaces: [NativePreviewPlace]
     /// Camera-only focus, including a freshly authorized device fix. This never
     /// selects or saves a place in the app's authoritative places store.
@@ -54,6 +57,14 @@ struct NativeRadarMap: UIViewRepresentable {
     let zoomCommand: Int
     let maximumZoom: Double
     let alerts: Data?
+    /// A validated official-alert identity selected by the native surface. It
+    /// is only used to emphasize an already-rendered NWS feature; it never
+    /// manufactures geometry from a notification or route.
+    let highlightedAlertID: String?
+    /// Incremented only when a known, active alert with official geometry is
+    /// selected. Keeping this separate from the ID lets a newly-arrived frame
+    /// retry focus without fighting a user's ordinary pan/zoom gestures.
+    let alertFocusRevision: Int
     let onAlert: (String) -> Void
     let onPlace: (NativePreviewPlace) -> Void
     /// Moving camera reports are throttled by the coordinator so the model can
@@ -80,7 +91,10 @@ struct NativeRadarMap: UIViewRepresentable {
         map.showsLogoView = false
         map.showsAttributionButton = false
         map.accessibilityLabel = "Weather map for \(place.name). Drag to pan; pinch or use the zoom buttons."
-        map.setCenter(.init(latitude: place.latitude, longitude: place.longitude), zoomLevel: 6.8, animated: false)
+        let opening = initialContext?.matches(place) == true ? initialContext : nil
+        map.setCenter(.init(latitude: opening?.latitude ?? place.latitude,
+                            longitude: opening?.longitude ?? place.longitude),
+                      zoomLevel: opening?.zoom ?? 6.8, animated: false)
         context.coordinator.installPlaces(on: map)
         let alertTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.openAlert(_:)))
         alertTap.cancelsTouchesInView = false
@@ -131,6 +145,8 @@ struct NativeRadarMap: UIViewRepresentable {
         private var markerPlaces: [ObjectIdentifier: NativePreviewPlace] = [:]
         private var markerRoles: [ObjectIdentifier: String] = [:]
         private var renderedAlerts: Data?
+        private var renderedAlertHighlightID: String?
+        private var consumedAlertFocusRevision = -1
         private var tileRequests = 0, tileParses = 0, tileErrors = 0
         private var lastMovingViewportReport = Date.distantPast
         init(_ input: NativeRadarMap) { self.input = input }
@@ -198,7 +214,11 @@ struct NativeRadarMap: UIViewRepresentable {
             let basemapChanged = baseRevision != input.basemapRevision
             let templates = input.weatherTiles?.templates
             guard basemapChanged || weatherID != nextID || renderedTemplates != templates
-                || renderedWeatherRevision != input.weatherRevision else { applyAlerts(to: style); return }
+                || renderedWeatherRevision != input.weatherRevision else {
+                applyAlerts(to: style)
+                focusHighlightedAlertIfNeeded(on: map)
+                return
+            }
             // Updating the resident image source avoids tearing down the
             // weather layer (and briefly exposing an empty map) on every tick.
             if !basemapChanged, let image = input.image,
@@ -209,6 +229,7 @@ struct NativeRadarMap: UIViewRepresentable {
                 renderedTemplates = templates
                 renderedWeatherRevision = input.weatherRevision
                 applyAlerts(to: style)
+                focusHighlightedAlertIfNeeded(on: map)
                 return
             }
             removeAlerts(from: style)
@@ -249,6 +270,7 @@ struct NativeRadarMap: UIViewRepresentable {
             renderedTemplates = templates
             renderedWeatherRevision = input.weatherRevision
             applyAlerts(to: style)
+            focusHighlightedAlertIfNeeded(on: map)
         }
 
         private let alertTones: [NativeRadarAlertsContract.Tone] = [.notice, .advisory, .watch, .warning]
@@ -258,11 +280,15 @@ struct NativeRadarMap: UIViewRepresentable {
                     if let layer = style.layer(withIdentifier: "native-alert-\(tone.rawValue)-\(suffix)") { style.removeLayer(layer) }
                 }
             }
+            for id in ["native-alert-highlight-fill", "native-alert-highlight-line"] {
+                if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
+            }
             if let source = style.source(withIdentifier: "native-alerts-source") { style.removeSource(source) }
             renderedAlerts = nil
+            renderedAlertHighlightID = nil
         }
         private func applyAlerts(to style: MLNStyle) {
-            guard renderedAlerts != input.alerts else { return }
+            guard renderedAlerts != input.alerts || renderedAlertHighlightID != input.highlightedAlertID else { return }
             removeAlerts(from: style)
             guard let data = input.alerts, let shape = try? MLNShape(data: data, encoding: String.Encoding.utf8.rawValue) else { return }
             let source = MLNShapeSource(identifier: "native-alerts-source", shape: shape, options: nil)
@@ -282,7 +308,134 @@ struct NativeRadarMap: UIViewRepresentable {
                     style.insertLayer(fill, below: labels); style.insertLayer(line, below: labels)
                 } else { style.addLayer(fill); style.addLayer(line) }
             }
+            if let selectedID = input.highlightedAlertID {
+                // Keep the source’s warning/watch/advisory color visible
+                // beneath this high-contrast outline. The bright treatment is
+                // selection state, not another severity category.
+                let predicate = NSPredicate(format: "alertID == %@", selectedID)
+                let fill = MLNFillStyleLayer(identifier: "native-alert-highlight-fill", source: source)
+                fill.predicate = predicate
+                fill.fillColor = NSExpression(forConstantValue: UIColor.white)
+                fill.fillOpacity = NSExpression(forConstantValue: 0.12)
+                let line = MLNLineStyleLayer(identifier: "native-alert-highlight-line", source: source)
+                line.predicate = predicate
+                line.lineColor = NSExpression(forConstantValue: UIColor.white)
+                line.lineOpacity = NSExpression(forConstantValue: 0.96)
+                line.lineWidth = NSExpression(forConstantValue: 4)
+                if let labels = style.layer(withIdentifier: "native-labels") {
+                    style.insertLayer(fill, below: labels); style.insertLayer(line, below: labels)
+                } else { style.addLayer(fill); style.addLayer(line) }
+            }
             renderedAlerts = data
+            renderedAlertHighlightID = input.highlightedAlertID
+        }
+
+        /// Fits only a verified GeoJSON feature that already exists in the
+        /// renderer input. A bulletin without geometry, a stale feature, or a
+        /// mismatched route leaves the current camera alone; the SwiftUI layer
+        /// tells the person why rather than pretending to know the area.
+        private func focusHighlightedAlertIfNeeded(on map: MLNMapView) {
+            guard input.alertFocusRevision != consumedAlertFocusRevision,
+                  let identifier = input.highlightedAlertID,
+                  let bounds = Self.alertBounds(identifier: identifier, data: input.alerts) else { return }
+            consumedAlertFocusRevision = input.alertFocusRevision
+            let padding = UIEdgeInsets(top: 118, left: 32, bottom: 252, right: 32)
+            map.setVisibleCoordinateBounds(bounds, edgePadding: padding, animated: true, completionHandler: nil)
+        }
+
+        /// GeoJSON bounds are used only for camera framing. The original
+        /// feature stays intact in the source, so no official outline is
+        /// simplified, generated, or otherwise altered for presentation.
+        private static func alertBounds(identifier: String, data: Data?) -> MLNCoordinateBounds? {
+            guard let data,
+                  let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let features = document["features"] as? [[String: Any]] else { return nil }
+            for feature in features {
+                let properties = feature["properties"] as? [String: Any]
+                let alertID = properties?["alertID"] as? String
+                let key = properties?["key"] as? String
+                guard sameAlertIdentifier(alertID, identifier) || sameAlertIdentifier(key, identifier),
+                      let geometry = feature["geometry"] as? [String: Any],
+                      let coordinates = geometry["coordinates"] else { continue }
+                var points: [(longitude: Double, latitude: Double)] = []
+                collectCoordinates(from: coordinates, into: &points)
+                if let bounds = cameraBounds(for: points) { return bounds }
+            }
+            return nil
+        }
+
+        private static func sameAlertIdentifier(_ candidate: String?, _ requested: String) -> Bool {
+            guard let candidate else { return false }
+            return candidate == requested || candidate == "id:" + requested || requested == "id:" + candidate
+        }
+
+        private static func collectCoordinates(from value: Any, into points: inout [(longitude: Double, latitude: Double)]) {
+            guard let values = value as? [Any] else { return }
+            if values.count >= 2, let longitude = coordinate(values[0]), let latitude = coordinate(values[1]),
+               longitude.isFinite, latitude.isFinite, abs(longitude) <= 180, abs(latitude) <= 90 {
+                points.append((longitude, latitude))
+                return
+            }
+            for child in values { collectCoordinates(from: child, into: &points) }
+        }
+
+        private static func coordinate(_ value: Any) -> Double? {
+            // Foundation may bridge JSON numbers as NSNumber. Reject booleans
+            // explicitly so `[true, 40]` cannot become a fictitious coordinate.
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+            return number.doubleValue
+        }
+
+        private static func cameraBounds(for points: [(longitude: Double, latitude: Double)]) -> MLNCoordinateBounds? {
+            guard !points.isEmpty else { return nil }
+            let south = points.map(\.latitude).min()!
+            let north = points.map(\.latitude).max()!
+            let longitudes = points.map(\.longitude)
+            guard let longitudeRange = compactLongitudeRange(longitudes) else { return nil }
+            let latitudePadding = max(0.03, (north - south) * 0.18)
+            let longitudePadding = max(0.03, (longitudeRange.east - longitudeRange.west) * 0.18)
+            let lowerLatitude = max(-85, south - latitudePadding)
+            let upperLatitude = min(85, north + latitudePadding)
+            return MLNCoordinateBounds(
+                sw: CLLocationCoordinate2D(latitude: lowerLatitude, longitude: longitudeRange.west - longitudePadding),
+                ne: CLLocationCoordinate2D(latitude: upperLatitude, longitude: longitudeRange.east + longitudePadding)
+            )
+        }
+
+        /// Finds the shortest longitude arc. MapLibre accepts the resulting
+        /// >180° endpoint for an antimeridian-crossing official polygon.
+        private static func compactLongitudeRange(_ input: [Double]) -> (west: Double, east: Double)? {
+            guard !input.isEmpty else { return nil }
+            let normalized = input.map { $0 < 0 ? $0 + 360 : $0 }.sorted()
+            guard let first = normalized.first, let last = normalized.last else { return nil }
+            if normalized.count == 1 { return (first > 180 ? first - 360 : first, first > 180 ? first - 360 : first) }
+            var largestGap = -Double.infinity
+            var gapIndex = 0
+            for index in normalized.indices {
+                let next = index == normalized.index(before: normalized.endIndex) ? normalized[0] + 360 : normalized[index + 1]
+                let gap = next - normalized[index]
+                if gap > largestGap { largestGap = gap; gapIndex = index }
+            }
+            let startIndex = gapIndex == normalized.index(before: normalized.endIndex) ? normalized.startIndex : normalized.index(after: gapIndex)
+            let start = normalized[startIndex]
+            let end = normalized[gapIndex] + (gapIndex < startIndex ? 360 : 0)
+            // Keep both endpoints in the same unwrapped world copy. For
+            // example, 200°…380° is the ordinary -160°…20° interval, while
+            // 179°…181° intentionally remains a narrow dateline crossing.
+            let west: Double
+            let east: Double
+            if start > 180 {
+                west = start - 360
+                east = end - 360
+            } else {
+                west = start
+                east = end
+            }
+            // A full-world/invalid interval is not a useful or safe camera
+            // request. The official feature remains available in the alerts
+            // sheet even when it cannot be framed here.
+            guard east - west < 359.9, first.isFinite, last.isFinite else { return nil }
+            return (west, east)
         }
         @objc func openAlert(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, let map = recognizer.view as? MLNMapView else { return }

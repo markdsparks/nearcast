@@ -99,7 +99,22 @@ actor NativePlacesOwnerStore {
     }
 
     func snapshot() throws -> NativePlacesOwnerSnapshot? {
-        try Self.withLock(directory: directory) { try Self.load(directory: directory)?.envelope.snapshot }
+        try Self.withLock(directory: directory) {
+            guard let stored = try Self.load(directory: directory) else { return nil }
+            // A verified legacy activation always retains its source export.
+            // Fresh native bootstrap deliberately never creates one. Old native
+            // builds accidentally queued legacy-only work for those profiles.
+            guard try Self.readFile(Self.sourceExportName, directory: directory) == nil,
+                  let last = stored.envelope.snapshot.pendingDeletions.last else {
+                return stored.envelope.snapshot
+            }
+            var next = stored.envelope
+            next.snapshot.pendingDeletions = []
+            next.snapshot.deletionWatermark = last.sequence
+            guard next.snapshot.revision < Int.max else { throw NativePlacesOwnerError.storage }
+            next.snapshot.revision += 1
+            return try commit(next, previous: stored).snapshot
+        }
     }
 
     /// The first verified legacy inventory is imported once. Later activation
@@ -117,6 +132,49 @@ actor NativePlacesOwnerStore {
                 pendingDeletions: [], deletionWatermark: 0)
             let envelope = Envelope(snapshot: snapshot, receipts: [])
             return try commit(envelope, previous: nil).snapshot
+        }
+    }
+
+    /// Starts an explicitly new native Places list. This is intentionally not
+    /// an import path: callers must provide a place resolved by native search
+    /// or a just-authorized device location. A disposable preview cache must
+    /// never be used as this input.
+    ///
+    /// If another writer completed a verified legacy handover first, its
+    /// canonical snapshot wins and is returned unchanged. A staged legacy
+    /// export without an owner is deliberately not overwritten; the user must
+    /// finish or retry that verified handover rather than mixing two sources.
+    func bootstrapNative(place: NativeManagedPlace,
+                         preferences: NativePlacesPreferences) throws -> NativePlacesOwnerSnapshot {
+        try Task.checkCancellation()
+        guard place.isValid, place.previewPlace.isValid, preferences.isValid else {
+            throw NativePlacesOwnerError.invalid
+        }
+        return try Self.withLock(directory: directory) {
+            if let stored = try Self.load(directory: directory) { return stored.envelope.snapshot }
+            guard try Self.readFile(Self.sourceExportName, directory: directory) == nil else {
+                throw NativePlacesOwnerError.busy
+            }
+
+            // Current Location remains a live selected place, but the first
+            // saved-family-place record is frozen like every later Save action.
+            // That keeps a device move from silently relocating a saved entry.
+            var savedPlace = place
+            savedPlace.followsCurrentLocation = false
+            let source = NativePlacesSource(
+                owner: "native",
+                capturedAt: try Self.firstCapture(),
+                selectedPlace: place,
+                lastPlace: place,
+                savedPlaces: [savedPlace],
+                preferences: preferences
+            )
+            guard Self.validSource(source, owner: "native") else {
+                throw NativePlacesOwnerError.invalid
+            }
+            let snapshot = NativePlacesOwnerSnapshot(revision: 1, source: source,
+                pendingDeletions: [], deletionWatermark: 0)
+            return try commit(Envelope(snapshot: snapshot, receipts: []), previous: nil).snapshot
         }
     }
 
@@ -147,7 +205,8 @@ actor NativePlacesOwnerStore {
                 }
                 guard let expected = command.expectedSource, expected == before.source else { throw NativePlacesOwnerError.stale }
                 var next = stored.envelope
-                try Self.apply(command, to: &next.snapshot)
+                let requiresLegacyCleanup = try Self.readFile(Self.sourceExportName, directory: directory) != nil
+                try Self.apply(command, to: &next.snapshot, requiresLegacyCleanup: requiresLegacyCleanup)
                 try Self.advance(&next.snapshot)
                 next.receipts.append(Receipt(requestID: canonicalCommand.requestID,
                     fingerprint: fingerprint, revision: next.snapshot.revision))
@@ -240,7 +299,8 @@ actor NativePlacesOwnerStore {
         }
     }
 
-    private static func apply(_ command: NativePlacesCommand, to snapshot: inout NativePlacesOwnerSnapshot) throws {
+    private static func apply(_ command: NativePlacesCommand, to snapshot: inout NativePlacesOwnerSnapshot,
+                              requiresLegacyCleanup: Bool) throws {
         switch command.action {
         case "select":
             let place: NativeManagedPlace
@@ -279,6 +339,10 @@ actor NativePlacesOwnerStore {
             if snapshot.source.savedPlaces.indices.contains(to) { snapshot.source.savedPlaces.swapAt(from, to) }
         case "remove":
             guard let index = snapshot.source.savedPlaces.firstIndex(where: { $0.id == command.id }) else { throw NativePlacesOwnerError.stale }
+            guard requiresLegacyCleanup else {
+                snapshot.source.savedPlaces.remove(at: index)
+                return
+            }
             guard snapshot.pendingDeletions.count < maximumPendingDeletions else { throw NativePlacesOwnerError.busy }
             let last = snapshot.pendingDeletions.last?.sequence ?? snapshot.deletionWatermark
             guard last < Int.max else { throw NativePlacesOwnerError.storage }
@@ -315,6 +379,12 @@ actor NativePlacesOwnerStore {
         parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         guard let next = parser.date(from: text), next > date, text.utf8.count == 24 else { throw NativePlacesOwnerError.storage }
         return text
+    }
+
+    private static func firstCapture() throws -> String {
+        // The normal capture helper gives us the exact persisted format and
+        // rejects clocks/formatters that cannot make a valid source receipt.
+        try nextCapture(after: "1970-01-01T00:00:00.000Z")
     }
 
     private static func validSource(_ source: NativePlacesSource, owner: String) -> Bool {

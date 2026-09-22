@@ -29,8 +29,15 @@ final class NativeStormActivityController {
         let rainChance = clampedInt(payload["rainChance"], min: 0, max: 100)
         let geometryQuality = cleanOptionalText(payload["geometryQuality"], limit: 18)
         let now = Date()
-        let arrivalAtEpoch = epochValue(payload["arrivalAtEpoch"]) ?? now.addingTimeInterval(Double(etaMinutes) * 60).timeIntervalSince1970
-        let expiresAtEpoch = epochValue(payload["expiresAtEpoch"]) ?? max(arrivalAtEpoch + 45 * 60, now.addingTimeInterval(30 * 60).timeIntervalSince1970)
+        let nativeEvidence = payload["nativeEvidence"] as? Bool == true
+        let arrivalAtEpoch = nativeEvidence ? nil : (epochValue(payload["arrivalAtEpoch"]) ?? now.addingTimeInterval(Double(etaMinutes) * 60).timeIntervalSince1970)
+        let expiresAtEpoch = epochValue(payload["expiresAtEpoch"]) ?? max((arrivalAtEpoch ?? now.timeIntervalSince1970) + 45 * 60, now.addingTimeInterval(30 * 60).timeIntervalSince1970)
+        guard expiresAtEpoch > now.timeIntervalSince1970 else {
+            return ["ok": false, "state": "unavailable", "reason": "weather-evidence-expired"]
+        }
+        let evidenceUpdatedAt = nativeEvidence ? epochValue(payload["evidenceUpdatedAtEpoch"]).map(Date.init(timeIntervalSince1970:)) ?? now : now
+        let staleDate = nativeEvidence ? epochValue(payload["evidenceStaleAtEpoch"]).map(Date.init(timeIntervalSince1970:)) ?? now : now.addingTimeInterval(8 * 60)
+        let remoteUpdates = NearcastBuildIdentity.remoteDeliveryEnabled && !nativeEvidence
         let deepLink = nativeDeepLinkURL(
             from: payload["url"],
             fallbackRoute: "watching?source=live-activity"
@@ -46,8 +53,8 @@ final class NativeStormActivityController {
             status: status,
             detail: detail,
             confidence: confidence,
-            updatedAt: now,
-            updatedAtEpoch: now.timeIntervalSince1970,
+            updatedAt: evidenceUpdatedAt,
+            updatedAtEpoch: evidenceUpdatedAt.timeIntervalSince1970,
             arrivalAtEpoch: arrivalAtEpoch,
             expiresAtEpoch: expiresAtEpoch,
             motionDegrees: motionDegrees,
@@ -58,29 +65,38 @@ final class NativeStormActivityController {
         )
         let content = ActivityContent(
             state: state,
-            staleDate: now.addingTimeInterval(8 * 60),
+            staleDate: min(staleDate, Date(timeIntervalSince1970: expiresAtEpoch)),
             relevanceScore: etaMinutes <= 30 ? 95 : 75
         )
 
-        if let existing = activity ?? Activity<NearcastStormActivityAttributes>.activities.first {
+        if let existing = currentActivity(),
+           existing.attributes.placeName == attributes.placeName,
+           existing.attributes.stormName == attributes.stormName,
+           existing.attributes.deepLink == attributes.deepLink,
+           isNativeEvidence(existing.content.state) == nativeEvidence {
             activity = existing
             await existing.update(content)
-            if NearcastBuildIdentity.remoteDeliveryEnabled {
+            if remoteUpdates {
                 observePushToken(for: existing, payload: payload)
             }
-            return response(state: "updated", activityId: existing.id)
+            return response(state: "updated", activityId: existing.id, remoteUpdates: remoteUpdates)
         }
 
+        // Activity attributes cannot be replaced by update(). A user choosing
+        // another place/notice explicitly replaces the old display, otherwise
+        // its old title and deep link would mislabel the new weather.
+        if currentActivity() != nil { _ = await end() }
+
         do {
-            if NearcastBuildIdentity.remoteDeliveryEnabled {
+            if remoteUpdates {
                 activity = try Activity.request(attributes: attributes, content: content, pushType: .token)
             } else {
                 activity = try Activity.request(attributes: attributes, content: content, pushType: nil)
             }
-            if NearcastBuildIdentity.remoteDeliveryEnabled, let activity {
+            if remoteUpdates, let activity {
                 observePushToken(for: activity, payload: payload)
             }
-            return response(state: "started", activityId: activity?.id)
+            return response(state: "started", activityId: activity?.id, remoteUpdates: remoteUpdates)
         } catch {
             return ["ok": false, "state": "failed", "reason": error.localizedDescription]
         }
@@ -90,12 +106,14 @@ final class NativeStormActivityController {
         let finalStatus = cleanText(payload["status"], fallback: "Storm watch ended", limit: 48)
         let finalDetail = cleanText(payload["detail"], fallback: "Nearcast is no longer tracking an incoming storm.", limit: 86)
         let finalConfidence = cleanText(payload["confidence"], fallback: "Ended", limit: 24)
-        let activityToEnd = activity ?? Activity<NearcastStormActivityAttributes>.activities.first
+        let activityToEnd = currentActivity()
 
         guard let activityToEnd else {
             activity = nil
             return ["ok": true, "state": "none"]
         }
+        let nativeEvidence = isNativeEvidence(activityToEnd.content.state)
+        let shouldNotifyServer = NearcastBuildIdentity.remoteDeliveryEnabled && !nativeEvidence
 
         let state = NearcastStormActivityAttributes.ContentState(
             etaMinutes: 0,
@@ -104,21 +122,21 @@ final class NativeStormActivityController {
             confidence: finalConfidence,
             updatedAt: Date(),
             updatedAtEpoch: Date().timeIntervalSince1970,
-            arrivalAtEpoch: Date().timeIntervalSince1970,
+            arrivalAtEpoch: nativeEvidence ? nil : Date().timeIntervalSince1970,
             expiresAtEpoch: Date().timeIntervalSince1970,
             motionDegrees: nil,
             confidenceValue: nil,
             severity: nil,
             rainChance: nil,
-            geometryQuality: "ended"
+            geometryQuality: nativeEvidence ? activityToEnd.content.state.geometryQuality : "ended"
         )
         await activityToEnd.end(
             ActivityContent(state: state, staleDate: Date()),
-            dismissalPolicy: .after(Date().addingTimeInterval(10 * 60))
+            dismissalPolicy: nativeEvidence ? .immediate : .after(Date().addingTimeInterval(10 * 60))
         )
         pushTokenTask?.cancel()
         pushTokenTask = nil
-        if NearcastBuildIdentity.remoteDeliveryEnabled {
+        if shouldNotifyServer {
             Task { await notifyServerEnded(activityId: activityToEnd.id) }
         }
         activity = nil
@@ -126,19 +144,38 @@ final class NativeStormActivityController {
     }
 
     func status() -> [String: Any] {
-        let current = activity ?? Activity<NearcastStormActivityAttributes>.activities.first
+        let current = currentActivity()
         if let current {
             activity = current
-            return response(state: "active", activityId: current.id)
+            var result = response(state: "active", activityId: current.id,
+                remoteUpdates: NearcastBuildIdentity.remoteDeliveryEnabled && !isNativeEvidence(current.content.state))
+            result["placeName"] = current.attributes.placeName
+            result["stormName"] = current.attributes.stormName
+            return result
         }
         return ["ok": true, "state": "none"]
     }
 
-    private func response(state: String, activityId: String?) -> [String: Any] {
+    private func currentActivity() -> Activity<NearcastStormActivityAttributes>? {
+        let current = ([activity].compactMap { $0 } + Activity<NearcastStormActivityAttributes>.activities).first(where: {
+            $0.activityState == .active || $0.activityState == .stale
+        })
+        guard let current, current.activityState == .active || current.activityState == .stale else {
+            activity = nil
+            return nil
+        }
+        return current
+    }
+
+    private func isNativeEvidence(_ state: NearcastStormActivityAttributes.ContentState) -> Bool {
+        ["official-alert", "hourly-forecast"].contains(state.geometryQuality ?? "")
+    }
+
+    private func response(state: String, activityId: String?, remoteUpdates: Bool) -> [String: Any] {
         var payload: [String: Any] = [
             "ok": true,
             "state": state,
-            "remoteUpdates": NearcastBuildIdentity.remoteDeliveryEnabled
+            "remoteUpdates": remoteUpdates
         ]
         if let activityId { payload["activityId"] = activityId }
         return payload

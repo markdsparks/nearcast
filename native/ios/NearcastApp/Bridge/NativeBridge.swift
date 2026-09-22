@@ -92,7 +92,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         let frameURL = message.frameInfo.request.url
         let isMainFrame = message.frameInfo.isMainFrame
         if let payload = message.body as? [String: Any], let type = payload["type"] as? String,
-           type == "preview.open" || type == "widget.snapshot" || type.hasPrefix("placesOwner.") {
+           type == "preview.open" || type == "widget.snapshot" || type == "agenda.snapshot" ||
+            type == "plans.handover.snapshot" || type.hasPrefix("placesOwner.") {
             // The preview export contains saved-place coordinates. Diagnostics
             // need the event, not a second copy of the family's place list.
             model?.recordBridgeMessage(["type": type])
@@ -664,6 +665,22 @@ final class NativeBridge: NSObject, WKScriptMessageHandler, @preconcurrency CLLo
         } else if type == "widget.snapshot" {
             guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame) else { return }
             saveWidgetSnapshot(payload)
+        } else if type == "agenda.snapshot" {
+            // Agenda is an explicitly exported, read-only plan projection. It
+            // must never share the notification/watch delivery path or infer
+            // an empty agenda from an incomplete legacy page.
+            guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame),
+                  let agenda = payload["agenda"] as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: agenda) else { return }
+            model?.receiveLegacyAgendaExport(data)
+        } else if type == "plans.handover.snapshot" {
+            // This is a strict, legacy-owned handover rehearsal only. Its
+            // receiver stages a verified copy without enabling native Plan
+            // writes or touching any notification registration.
+            guard isTrustedAmbientFrame(url: frameURL, isMainFrame: isMainFrame),
+                  let handover = payload["handover"] as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: handover) else { return }
+            model?.receiveLegacyPlanHandoverExport(data)
         } else if type == "stormActivity.start" || type == "stormActivity.update" {
             startOrUpdateStormActivity(payload)
         } else if type == "stormActivity.end" {

@@ -8,11 +8,17 @@ import FoundationXML
 /// advertised frames. No persisted cache, cookies, credentials or location upload.
 final class MRMSClient: @unchecked Sendable {
     private let transport: RadarChunkClient
+    private let listingTransport: RadarChunkClient
+    private let scanCache: MRMSScanCache
     private let lock = NSLock()
     private var activeDecodes = 0
 
-    init(configuration: URLSessionConfiguration = .ephemeral) throws {
+    init(configuration: URLSessionConfiguration = .ephemeral, scanCache: MRMSScanCache = .shared) throws {
         transport = try RadarChunkClient(allowedOrigins: [MRMSContract.origin], configuration: configuration)
+        // Discovery must not contend with two selected/warming frame jobs.
+        // This isolated public-only lane keeps its own bounded admission.
+        listingTransport = try RadarChunkClient(allowedOrigins: [MRMSContract.origin], configuration: configuration)
+        self.scanCache = scanCache
     }
 
     func listRecentFrames(now: Date = Date(), historyMinutes: Int = 90, maximumFrames: Int = 10,
@@ -36,7 +42,7 @@ final class MRMSClient: @unchecked Sendable {
             var token: String?, seenTokens = Set<String>()
             for pageIndex in 0..<3 {
                 let url = try Self.listingURL(prefix: prefix, continuationToken: token)
-                let data = try await transport.fetchBytes(at: url, maximumBytes: 2 * 1024 * 1024)
+                let data = try await listingTransport.fetchBytes(at: url, maximumBytes: 2 * 1024 * 1024)
                 let page = try Self.parseListing(data, expectedPrefix: prefix)
                 for frame in page.frames where frame.validTimeMilliseconds >= earliest && frame.validTimeMilliseconds <= nowMS {
                     if let old = found[frame.key], old != frame { throw MRMSContract.Failure.invalidListing }
@@ -65,15 +71,28 @@ final class MRMSClient: @unchecked Sendable {
         try bounds.validate()
         guard (64...1024).contains(width), (64...1024).contains(height),
               width <= RadarNumericContract.maximumTexturePixels / height else { throw MRMSContract.Failure.invalidOptions }
-        let data = try await transport.fetchBytes(at: frame.url, maximumBytes: frame.byteLength)
-        try Task.checkCancellation()
-        let job = Task.detached(priority: .userInitiated) {
-            try MRMSContract.decode(data, frame: frame, bounds: bounds, width: width, height: height, encoding: encoding)
+        let lease = try await scanCache.acquire(frame) { [transport] in
+            try await transport.fetchBytes(at: frame.url, maximumBytes: frame.byteLength)
         }
-        return try await withTaskCancellationHandler(operation: {
+        do {
             try Task.checkCancellation()
-            return try await job.value
-        }, onCancel: { job.cancel() })
+            let job = Task.detached(priority: .userInitiated) {
+                try MRMSContract.decode(lease.data, frame: frame, bounds: bounds, width: width, height: height, encoding: encoding)
+            }
+            let result = try await withTaskCancellationHandler(operation: {
+                try Task.checkCancellation()
+                return try await job.value
+            }, onCancel: { job.cancel() })
+            try Task.checkCancellation()
+            // A completed HTTP response alone is not cacheable: source time,
+            // GRIB/PNG checksums, compressed data and viewport decoding must pass.
+            await scanCache.release(lease, validated: true)
+            try Task.checkCancellation()
+            return result
+        } catch {
+            await scanCache.release(lease, validated: false)
+            throw error
+        }
     }
 
     private func admitDecode() -> Bool {
@@ -171,6 +190,222 @@ final class MRMSClient: @unchecked Sendable {
         return (0..<maximumFrames).map { index in
             selected[Int(floor(Double(index) * Double(selected.count - 1) / Double(maximumFrames - 1) + 0.5))]
         }
+    }
+}
+
+/// Shares only immutable, validated public MRMS scan bytes. A pan changes the
+/// decoded viewport, not the national source file. At most 32 MiB / 8 completed
+/// scans and two in-flight scans (each <= 8 MiB) are retained in memory. Nothing
+/// is persisted and no URLSession response, cookies or credentials are cached.
+///
+/// Every consumer still decodes and validates its advertised frame. This cache
+/// grants no freshness: discovery and presentation retain their existing rules
+/// for historical/stale/future observations. The key includes all advertised
+/// identity fields, so a changed length/time cannot reuse the old source bytes.
+actor MRMSScanCache {
+    static let shared = MRMSScanCache()
+
+    struct Key: Hashable, Sendable {
+        let source: String
+        let byteLength: Int
+        let validTimeMilliseconds: Int64
+        init(_ frame: MRMSContract.AdvertisedFrame) {
+            source = frame.key
+            byteLength = frame.byteLength
+            validTimeMilliseconds = frame.validTimeMilliseconds
+        }
+    }
+    struct Lease: Sendable {
+        let data: Data
+        fileprivate let key: Key
+        fileprivate let flightID: UUID?
+        fileprivate let consumerID: UUID
+    }
+    struct Snapshot: Sendable {
+        let cachedBytes: Int
+        let cachedScans: Int
+        let inFlightScans: Int
+        let consumers: Int
+    }
+    private struct Cached {
+        let data: Data
+        let storedAt: Date
+        var access: UInt64
+    }
+    private struct Flight {
+        let id: UUID
+        let generation: UInt64
+        var task: Task<Void, Never>?
+        var waiters: [UUID: MRMSScanWaiter] = [:]
+        var leases: Set<UUID> = []
+        var data: Data?
+    }
+
+    private let maximumBytes: Int
+    private let maximumScans: Int
+    private let maximumAge: TimeInterval
+    private var cached: [Key: Cached] = [:]
+    private var flights: [Key: Flight] = [:]
+    private var cachedBytes = 0
+    private var access: UInt64 = 0
+    private var generation: UInt64 = 0
+
+    init(maximumBytes: Int = 32 * 1024 * 1024, maximumScans: Int = 8, maximumAge: TimeInterval = 15 * 60) {
+        // Small limits can be injected in offline tests; production can never
+        // accidentally request an unbounded cache through configuration.
+        self.maximumBytes = min(32 * 1024 * 1024, max(0, maximumBytes))
+        self.maximumScans = min(8, max(0, maximumScans))
+        self.maximumAge = maximumAge.isFinite ? min(15 * 60, max(0, maximumAge)) : 0
+    }
+
+    func acquire(_ frame: MRMSContract.AdvertisedFrame,
+                 load: @escaping @Sendable () async throws -> Data) async throws -> Lease {
+        let key = Key(frame), consumerID = UUID(), waiter = MRMSScanWaiter()
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                waiter.attach(continuation)
+                guard !waiter.isFinished else { return }
+                evictExpired()
+                if var hit = cached[key] {
+                    access &+= 1
+                    hit.access = access
+                    cached[key] = hit
+                    waiter.finish(.success(.init(data: hit.data, key: key, flightID: nil, consumerID: consumerID)))
+                    return
+                }
+                if var flight = flights[key] {
+                    guard flight.waiters.count + flight.leases.count < 16 else {
+                        waiter.finish(.failure(MRMSContract.Failure.requestLimit)); return
+                    }
+                    if let data = flight.data {
+                        if waiter.finish(.success(.init(data: data, key: key, flightID: flight.id, consumerID: consumerID))) {
+                            flight.leases.insert(consumerID)
+                        }
+                    } else {
+                        flight.waiters[consumerID] = waiter
+                    }
+                    flights[key] = flight
+                    return
+                }
+                guard flights.count < 2 else {
+                    waiter.finish(.failure(MRMSContract.Failure.requestLimit)); return
+                }
+                let flightID = UUID()
+                let task = Task.detached(priority: .userInitiated) { [self] in
+                    let result: Result<Data, Error>
+                    do {
+                        let data = try await load()
+                        try Task.checkCancellation()
+                        guard data.count == key.byteLength else { throw MRMSContract.Failure.sizeLimit }
+                        guard data.starts(with: [0x1f, 0x8b]) else { throw MRMSContract.Failure.invalidCompression }
+                        result = .success(data)
+                    } catch { result = .failure(error) }
+                    await complete(key: key, flightID: flightID, result: result)
+                }
+                flights[key] = Flight(id: flightID, generation: generation, task: task, waiters: [consumerID: waiter])
+            }
+        }, onCancel: {
+            // Do not wait for the shared request to finish to release a canceled
+            // caller. Its cancellation cannot cancel another caller's scan.
+            waiter.finish(.failure(CancellationError()))
+            Task { await self.cancel(key: key, consumerID: consumerID) }
+        })
+    }
+
+    func release(_ lease: Lease, validated: Bool) {
+        guard var flight = flights[lease.key], flight.id == lease.flightID,
+              flight.leases.remove(lease.consumerID) != nil else { return }
+        if validated, flight.generation == generation, cached[lease.key] == nil, maximumScans > 0, maximumAge > 0,
+           lease.data.count <= maximumBytes {
+            evictExpired()
+            while cached.count >= maximumScans || cachedBytes > maximumBytes - lease.data.count {
+                guard let oldest = cached.min(by: { $0.value.access < $1.value.access })?.key else { break }
+                remove(oldest)
+            }
+            access &+= 1
+            cached[lease.key] = Cached(data: lease.data, storedAt: Date(), access: access)
+            cachedBytes += lease.data.count
+        }
+        if flight.waiters.isEmpty && flight.leases.isEmpty { flights.removeValue(forKey: lease.key) }
+        else { flights[lease.key] = flight }
+    }
+
+    /// Keep live consumers working, but do not repopulate retained storage with
+    /// a download/validation that was already in flight at memory pressure.
+    func removeAll() { generation &+= 1; cached.removeAll(); cachedBytes = 0 }
+
+    func snapshot() -> Snapshot {
+        evictExpired()
+        return .init(cachedBytes: cachedBytes, cachedScans: cached.count, inFlightScans: flights.count,
+                     consumers: flights.values.reduce(0) { $0 + $1.waiters.count + $1.leases.count })
+    }
+
+    private func complete(key: Key, flightID: UUID, result: Result<Data, Error>) {
+        guard var flight = flights[key], flight.id == flightID else { return }
+        flight.task = nil
+        switch result {
+        case .success(let data):
+            flight.data = data
+            for (consumerID, waiter) in flight.waiters {
+                if waiter.finish(.success(.init(data: data, key: key, flightID: flightID, consumerID: consumerID))) {
+                    flight.leases.insert(consumerID)
+                }
+            }
+            flight.waiters.removeAll()
+            if flight.leases.isEmpty { flights.removeValue(forKey: key) }
+            else { flights[key] = flight }
+        case .failure(let error):
+            flights.removeValue(forKey: key)
+            for waiter in flight.waiters.values { waiter.finish(.failure(error)) }
+        }
+    }
+
+    private func cancel(key: Key, consumerID: UUID) {
+        guard var flight = flights[key] else { return }
+        flight.waiters.removeValue(forKey: consumerID)
+        flight.leases.remove(consumerID)
+        if flight.waiters.isEmpty && flight.leases.isEmpty {
+            flights.removeValue(forKey: key)
+            flight.task?.cancel()
+        } else { flights[key] = flight }
+    }
+
+    private func evictExpired() {
+        let now = Date()
+        for (key, value) in cached where now.timeIntervalSince(value.storedAt) >= maximumAge || now < value.storedAt {
+            remove(key)
+        }
+    }
+    private func remove(_ key: Key) {
+        if let value = cached.removeValue(forKey: key) { cachedBytes -= value.data.count }
+    }
+}
+
+/// A cancellation may precede continuation installation or race with successful
+/// completion. Locking the small per-consumer slot guarantees one resume only;
+/// continuations are always resumed outside the lock.
+private final class MRMSScanWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<MRMSScanCache.Lease, Error>?
+    private var result: Result<MRMSScanCache.Lease, Error>?
+    var isFinished: Bool { lock.lock(); defer { lock.unlock() }; return result != nil }
+
+    func attach(_ continuation: CheckedContinuation<MRMSScanCache.Lease, Error>) {
+        lock.lock()
+        if let result { lock.unlock(); continuation.resume(with: result) }
+        else { self.continuation = continuation; lock.unlock() }
+    }
+    @discardableResult
+    func finish(_ result: Result<MRMSScanCache.Lease, Error>) -> Bool {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return false }
+        self.result = result
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
+        return true
     }
 }
 

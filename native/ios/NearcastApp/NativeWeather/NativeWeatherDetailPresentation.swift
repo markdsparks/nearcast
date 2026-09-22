@@ -177,8 +177,7 @@ struct NativeWeatherDetailPresentation {
         return "\(formatted(value, kind: kind)) · \(clock(point.date))"
     }
     private func direction(_ degrees: Double?) -> String {
-        guard let degrees, degrees.isFinite, (0...360).contains(degrees) else { return "Unavailable" }
-        let names = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-        return "\(names[Int((degrees / 45).rounded()) % 8]) · \(Int(degrees.rounded()))°"
+        guard let degrees, let compass = NativeWindDirection.compassPoint(degrees) else { return "Unavailable" }
+        return "\(compass) · \(Int(degrees.rounded()))°"
     }
 }

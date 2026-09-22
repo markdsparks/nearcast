@@ -3,6 +3,18 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// One retention boundary for every native presentation of a forecast. A
+/// successful fetch may be saved locally for short outages, but neither a disk
+/// receipt nor an already-open screen may make the same old forecast look
+/// current forever.
+enum NativeForecastRetentionPolicy {
+    static let maximumAge: TimeInterval = 48 * 60 * 60
+
+    static func isUsable(_ forecast: NativeWeatherForecast, now: Date) -> Bool {
+        now.timeIntervalSince(forecast.generatedAt) <= maximumAge
+    }
+}
+
 /// Read-only preview weather. This never writes the App Group, user records,
 /// widgets, Watch snapshots, or notification registrations.
 actor NativeForecastRepository {
@@ -10,7 +22,6 @@ actor NativeForecastRepository {
     private let session: URLSession
     private let fileManager = FileManager.default
     private static let maximumEntries = 12
-    private static let maximumCacheAge: TimeInterval = 48 * 3600
     private static let maximumPayloadBytes = 4_000_000
     private static let cacheVersion = 1
 
@@ -39,7 +50,7 @@ actor NativeForecastRepository {
               abs(envelope.latitude - latitude) <= 0.0011, abs(envelope.longitude - longitude) <= 0.0011,
               let forecast = try? NativeWeatherForecast.decode(data: envelope.payload, latitude: latitude,
                   longitude: longitude, metric: metric, now: Date()),
-              Date().timeIntervalSince(forecast.generatedAt) <= Self.maximumCacheAge else { return nil }
+              NativeForecastRetentionPolicy.isUsable(forecast, now: Date()) else { return nil }
         return forecast
     }
 
@@ -64,6 +75,9 @@ actor NativeForecastRepository {
         guard response.url?.scheme == "https", response.url?.host == "getnearcast.app", response.url?.path == "/api/forecast",
               data.count <= Self.maximumPayloadBytes else { throw NativeForecastError.invalidPayload }
         let forecast = try NativeWeatherForecast.decode(data: data, latitude: latitude, longitude: longitude, metric: metric, now: now)
+        guard NativeForecastRetentionPolicy.isUsable(forecast, now: now) else {
+            throw NativeForecastError.staleForecast
+        }
         try Task.checkCancellation()
         // Cache failures must not discard a valid network forecast. Atomic writes
         // preserve the prior entry if a process is interrupted mid-refresh.
@@ -94,7 +108,7 @@ actor NativeForecastRepository {
                 guard let values = try? url.resourceValues(forKeys: keys), values.isRegularFile == true else { return nil }
                 return (url, values.contentModificationDate ?? .distantPast)
             }.sorted { $0.1 > $1.1 }
-        for (index, entry) in entries.enumerated() where index >= Self.maximumEntries || Date().timeIntervalSince(entry.1) > Self.maximumCacheAge {
+        for (index, entry) in entries.enumerated() where index >= Self.maximumEntries || Date().timeIntervalSince(entry.1) > NativeForecastRetentionPolicy.maximumAge {
             try? fileManager.removeItem(at: entry.0)
         }
     }

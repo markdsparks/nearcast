@@ -21,8 +21,13 @@ final class NativePlacesOwnerController: ObservableObject {
     init(production: Bool) {
         directory = Self.directory(production: production)
         store = NativePlacesOwnerStore(directory: directory)
-        publishesCompanions = production
+        // Native-only Dev owns a separate app-group namespace, so its verified
+        // Places state must reach that Dev build's widgets and Watch even when
+        // the retained Web setting still says Local. A compatibility/local
+        // host remains conservative until native-only mode is explicitly on.
+        publishesCompanions = production || NativeRuntimeConfiguration.isNativeOnlyExperience
         apply(NativePlacesOwnerStore.readBootstrap(directory: directory))
+        reconcileLocalCleanup()
     }
 
     private static func directory(production: Bool) -> URL {
@@ -37,11 +42,34 @@ final class NativePlacesOwnerController: ObservableObject {
         generation += 1
         directory = Self.directory(production: production)
         store = NativePlacesOwnerStore(directory: directory)
-        publishesCompanions = production
+        publishesCompanions = production || NativeRuntimeConfiguration.isNativeOnlyExperience
         isActivating = false
         snapshot = nil
         status = "unmigrated"
         apply(NativePlacesOwnerStore.readBootstrap(directory: directory))
+        reconcileLocalCleanup()
+    }
+
+    /// A native-only scene can deliberately hand the user to the retained
+    /// compatibility screen for one explicit, verified setup step. That screen
+    /// owns a separate controller instance but writes to this same protected
+    /// store. Re-read the store when native returns so the next Places tap is
+    /// the full native editor rather than a stale read-only preview.
+    func refreshFromDisk() {
+        guard !isActivating else { return }
+        apply(NativePlacesOwnerStore.readBootstrap(directory: directory))
+        reconcileLocalCleanup()
+    }
+
+    private func reconcileLocalCleanup() {
+        guard status == "owned", snapshot?.pendingDeletions.isEmpty == false else { return }
+        let started = generation
+        let activeStore = store
+        Task { [weak self] in
+            guard let current = try? await activeStore.snapshot(), let self,
+                  self.generation == started else { return }
+            self.apply(.owned(current))
+        }
     }
 
     func activate(_ source: NativePlacesSource) async throws -> NativePlacesOwnerSnapshot {
@@ -60,6 +88,44 @@ final class NativePlacesOwnerController: ObservableObject {
             if started == generation { apply(NativePlacesOwnerStore.readBootstrap(directory: directory)) }
             throw error
         }
+    }
+
+    /// Native-only Dev can begin a genuinely new Places list without creating
+    /// a WebKit host. The caller has to supply a place from native search or a
+    /// direct, user-authorized current-location request; this never receives a
+    /// NativePreviewContext or a cached family-place record.
+    func createNativePlaces(startingAt place: NativeManagedPlace) async throws -> NativePlacesOwnerSnapshot {
+        guard status == "unmigrated", !isActivating, place.isValid, place.previewPlace.isValid else {
+            throw NativePlacesOwnerError.unavailable
+        }
+        let started = generation
+        isActivating = true
+        message = nil
+        defer { if started == generation { isActivating = false } }
+        do {
+            let saved = try await store.bootstrapNative(place: place, preferences: Self.nativeDefaults())
+            guard started == generation else { throw NativePlacesOwnerError.stale }
+            apply(.owned(saved))
+            return saved
+        } catch {
+            // Do the same readback discipline as verified legacy activation:
+            // an atomic replace may have committed before a later error.
+            if started == generation { apply(NativePlacesOwnerStore.readBootstrap(directory: directory)) }
+            throw error
+        }
+    }
+
+    /// Search is a read-only native operation and is safe before ownership.
+    /// It intentionally does not hand a cached preview record to the owner.
+    func searchForNativeBootstrap(query: String) async throws -> [NativeManagedPlace] {
+        guard status == "unmigrated", !isActivating else { throw NativePlacesOwnerError.unavailable }
+        return try await lookup.search(query: query)
+    }
+
+    /// Requests location only from the explicit native first-run control.
+    func currentLocationForNativeBootstrap() async throws -> NativeManagedPlace {
+        guard status == "unmigrated", !isActivating else { throw NativePlacesOwnerError.unavailable }
+        return try await lookup.currentLocation()
     }
 
     func perform(_ command: NativePlacesCommand,
@@ -133,6 +199,13 @@ final class NativePlacesOwnerController: ObservableObject {
             retryCompanionPublication()
         }
         onChange?()
+    }
+
+    private static func nativeDefaults() -> NativePlacesPreferences {
+        // Match the existing product defaults for a genuinely new profile.
+        // Any imported profile continues to preserve its verified settings.
+        NativePlacesPreferences(unit: "fahrenheit", timeFormat: "auto", theme: "auto",
+            reactiveSkyEnabled: false, reactiveSkyMotionAllowed: false)
     }
 
     func retryCompanionPublication() {

@@ -9,7 +9,9 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 private final class PublicationMemory {
     var value: NearcastWidgetSnapshotStore.Publication?
     var writes = 0
+    var replays = 0
     var failWrites = false
+    var failReplays = false
 
     func coordinator() -> NativeSnapshotPublicationCoordinator {
         NativeSnapshotPublicationCoordinator(readPublication: { self.value }, writePublication: { snapshot, place in
@@ -18,6 +20,13 @@ private final class PublicationMemory {
                     place?.publicationGeneration == snapshot.publicationGeneration) else { return false }
             self.value = .init(snapshot: snapshot, place: place)
             self.writes += 1
+            return true
+        }, replayPublication: { publication in
+            guard !self.failReplays,
+                  publication.snapshot.publicationGeneration == self.value?.snapshot.publicationGeneration,
+                  publication.snapshot.ownerRevision == self.value?.snapshot.ownerRevision,
+                  publication.place?.id == self.value?.place?.id else { return false }
+            self.replays += 1
             return true
         })
     }
@@ -95,6 +104,12 @@ struct NativeSnapshotPublicationTests {
             source: source, revision: 2), "verified native weather publishes after native ownership")
         expect(memory.value?.snapshot.temperature == 23 && memory.value?.snapshot.windUnit == "km/h" &&
             memory.value?.snapshot.nativeWeatherInvalidation == false, "native forecast refreshes companion weather in the selected units")
+        let writesAfterNativeForecast = memory.writes
+        let replaysAfterNativeForecast = memory.replays
+        expect(coordinator.publishNativeWeather(forecast: nativeForecast, previewPlace: selected.previewPlace,
+            source: source, revision: 2), "duplicate native forecast remains accepted in the active process")
+        expect(memory.writes == writesAfterNativeForecast && memory.replays == replaysAfterNativeForecast,
+            "an immediately duplicated native observation does not replay an already-delivered receipt")
         var otherPreview = selected.previewPlace
         otherPreview = NativePreviewPlace(id: "another-place", name: otherPreview.name, latitude: otherPreview.latitude,
             longitude: otherPreview.longitude, timezone: otherPreview.timezone, countryCode: otherPreview.countryCode)
@@ -102,10 +117,18 @@ struct NativeSnapshotPublicationTests {
             source: source, revision: 2), "native weather cannot publish for an unselected place")
 
         let beforeReopen = memory.writes
+        let replaysBeforeReopen = memory.replays
         let reopened = memory.coordinator()
         expect(!reopened.acceptLegacySnapshot(snapshot: weather, place: place, ownerRevision: 2), "cold startup blocks publication until the native owner is loaded")
         expect(reopened.activateOwner(source: source, revision: 2), "cold owner hydration restores the publication gate")
-        expect(memory.writes == beforeReopen, "same-revision reopen keeps extension weather and avoids redundant transfer")
+        expect(memory.writes == beforeReopen, "same-revision reopen keeps extension weather and avoids redundant writes")
+        expect(memory.replays == replaysBeforeReopen + 1, "cold owner hydration replays the committed companion receipt once")
+        expect(reopened.publishNativeWeather(forecast: nativeForecast, previewPlace: selected.previewPlace,
+            source: source, revision: 2), "duplicate native forecast remains accepted after a cold restart")
+        expect(memory.writes == beforeReopen && memory.replays == replaysBeforeReopen + 1,
+            "duplicate native observations neither write nor replay the same receipt twice")
+        expect(reopened.activateOwner(source: source, revision: 2), "same owner can be reopened after the replay")
+        expect(memory.replays == replaysBeforeReopen + 1, "same process bounds companion replays for unchanged weather")
         var nextSource = source
         nextSource.selectedPlace?.id = "new-selection"
         nextSource.selectedPlace?.alias = "Second place"

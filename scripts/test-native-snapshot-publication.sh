@@ -14,6 +14,11 @@ xcrun swiftc \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherPreviewContext.swift" \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativePlacesControlsModel.swift" \
   "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherForecast.swift" \
+  "$ROOT/native/ios/NearcastApp/NativeWeather/NativeAgendaRepository.swift" \
+  "$ROOT/native/ios/NearcastApp/NativeWeather/NativeWeatherEssentials.swift" \
+  "$ROOT/native/ios/NearcastApp/NativeWeather/NativePlanEvidence.swift" \
+  "$ROOT/native/ios/NearcastApp/NativeWeather/NativePlanWeatherRead.swift" \
+  "$ROOT/native/ios/NearcastApp/NativeWeather/NativeCompanionContent.swift" \
   "$ROOT/native/ios/NearcastApp/Bridge/NativeSnapshotPublicationCoordinator.swift" \
   "$ROOT/scripts/native-snapshot-publication-test.swift" \
   -o "$TEST_ROOT/native-snapshot-publication-test"

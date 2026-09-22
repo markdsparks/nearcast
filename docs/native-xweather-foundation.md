@@ -1,5 +1,35 @@
 # Native StormScope foundation (not enabled in the app)
 
+## September 20 product follow-up
+
+Storm Check is removed from the native app at the user's request. It is a
+separate local precipitation-analysis experiment, not the Xweather StormScope
+integration described here. Nearcast's own enhanced radar remains the default.
+
+The recommended next Xweather evaluation is **observed lightning on the existing
+map**, not a second radar mode. This is a proposal, not an enabled capability.
+Native-use licensing has already been confirmed by the user, but exact product
+entitlements and native credentials still need verification before activation.
+
+- Prefer a separately selectable lightning layer that preserves Nearcast radar,
+  the timeline and official alerts. Show observation time and stale/unavailable
+  states; never carry observed strikes into future forecast frames as predictions.
+- MapsGL documents native lightning layers, while the direct Weather API exposes
+  strike coordinates/timestamps and supports a data-overlay approach. Compare the
+  existing plan's permissions, usage and actual device overhead before choosing.
+  MapsGL access does not establish direct API access.
+- Standard direct lightning API access is bounded to the latest five minutes,
+  100 km radius and 1,000 events per query, with a 10x multiplier in the current
+  documentation. Older data requires a separate add-on. Do not promise historical
+  playback or nearby-strike summaries outside the verified data/entitlement.
+- The current proof requires StormScope activation and nearby radar activity.
+  A lightning-only design must replace that coupling: radar echoes are not a
+  prerequisite for checking lightning, and no returned strikes is not an all-clear.
+
+References checked September 20, 2026:
+[MapsGL layers](https://www.xweather.com/docs/mapsgl/weather-layers),
+[Lightning API](https://www.xweather.com/docs/weather-api/endpoints/lightning).
+
 ## Current checkpoint
 
 The native configuration client, strict lease contract, and isolated MapsGL

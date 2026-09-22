@@ -1,36 +1,72 @@
 # Nearcast iOS
 
+## Native Dev lane — current behavior
+
+**Nearcast Dev** is now a side-by-side, native-only Debug lane. A normal Dev
+launch starts the native root and must not create `NearcastWebModel` or a
+`WKWebView`. It exercises the native weather repository, Places, Map, Ask,
+Plans, widgets, and Watch companion independently from TestFlight.
+
+`-nearcast-web` is a deliberate, process-only Debug recovery/migration escape
+for investigating the retained compatibility host. It does not change a saved
+preference and is not a normal product-testing path. Local web-server settings
+apply only while that explicit compatibility escape is running.
+
+Release/TestFlight deliberately remains on the established compatibility host
+until all supported routes pass their native cutover gates. The Dev behavior
+does not silently promote a new runtime to Release.
+
 ## Direction update — September 18, 2026
 
-Nearcast is moving to a fully native main iPhone experience through the [phased native migration plan](../../docs/native-migration-plan.md). That plan supersedes the web-first development policy below; the existing shell and its release instructions remain the operational baseline until replacements pass their family TestFlight gates. No native migration phase is complete merely because this direction is documented.
+**September 20 update:** native is a fresh start, with no legacy import needed.
+Existing native data stays intact. The normal Dev setup asks for the first
+place and then uses native Places, Plans, Ask, and publication. See the
+[cutover checkpoint](../../docs/native-cutover-checkpoint.md). The migration
+paragraphs below document the earlier rollout; importing user data is no
+longer an acceptance gate.
 
-The first preview is read-only Today/Hourly/selected-day weather. Durable-data ownership, compatibility fallback, and later removal of the main web runtime follow explicit migration gates. Preserve existing forecast services, user records, notification selections, and native Watch/widget/AI investments.
+Nearcast is moving to a fully native main iPhone experience through the
+[phased native migration plan](../../docs/native-migration-plan.md). Preserve
+the forecast services, user records, notification selections, and native
+Watch/widget/AI investments while each remaining domain is migrated with an
+explicit owner and recovery path. No phase is complete merely because the
+native Dev lane can display a screen.
 
-## Existing shell — current implementation and operational reference
+## Retained compatibility host — Release and deliberate Debug escape
 
-This is the native iOS platform layer for Nearcast. It intentionally starts thin:
+The older browser-backed host remains an operational compatibility path, not
+the default Nearcast Dev experience:
 
-- `Debug` is the side-by-side **Nearcast Dev** build and loads production
-  Nearcast by default; switch it to a local server only intentionally from
-  native diagnostics.
-- `Release` always loads `https://getnearcast.app`.
-- A native debug sheet lets you switch local/production, change the local URL, and reload the web app.
-- Local HTTP allowances are Debug-only; Release uses the production HTTPS app surface.
-- A JavaScript bridge is installed as `window.NearcastNative.postMessage(payload)` for future native surfaces.
+- **Nearcast Dev / Debug** starts native-only. Use `-nearcast-web` only for a
+  focused migration or recovery check.
+- **Release/TestFlight** continues to load `https://getnearcast.app` until a
+  separate promotion explicitly changes that behavior.
+- Local HTTP allowances and the JavaScript bridge are retained for the
+  explicit Debug compatibility escape; they are not dependencies of the
+  native Dev journey.
 
-The current goal is to preserve the fast web iteration loop while giving us a clean place for iOS-only capabilities: widgets, APNs, Live Activities, App Intents, and later local ML experiments.
+## Working model during cutover
 
-## Working model
+Nearcast should not wait on TestFlight for every product iteration, but the
+two clients now have different jobs:
 
-Nearcast should not wait on TestFlight for every product iteration. The native app is a stable iOS shell around the live Nearcast web app:
+- **Website changes:** deploy and test the website as its own client. They do
+  not prove the native Dev experience.
+- **Native product changes:** run the native-only **Nearcast Dev** lane from
+  Xcode/direct device first, then archive when a native release gate is met.
+- **Compatibility checks:** invoke `-nearcast-web` intentionally and only to
+  test migration/recovery behavior that has not yet been retired.
 
-- Web/product changes: deploy the web app, then refresh or relaunch the installed native app.
-- Native shell changes: run locally from Xcode first, then archive to TestFlight when the shell behavior changes.
-- Platform features: add native modules behind the bridge, but keep the first user-facing surface in the web app until the native capability is clearly better.
-
-This keeps the daily loop fast while still moving toward a real iOS app.
+This keeps the website independently useful while making the native path the
+place where native cutover work is proven.
 
 ## Private AI runtime
+
+The native-only app now calls its native conversation/actions directly and
+uses a deterministic forecast reader when the on-device model is unavailable.
+Native dictation uses `NativeAskSpeechController`, stays on-device, and fills
+an editable draft; it never auto-submits. The JavaScript bridge described
+below belongs to the retained compatibility host, not normal native Ask.
 
 Nearcast uses one JavaScript contract for private summaries and Plan Check
 intent parsing, with Operon validating every model result before the product
@@ -59,17 +95,24 @@ dictation and an audio-reactive waveform without receiving or storing audio.
 
 Use three loops, from fastest to slowest.
 
-1. Web loop
+1. Website loop
 
-   Change `app.js`, `map.js`, `styles.css`, or other web files. Test in Safari/PWA and in the Debug native shell pointed at the local server. When good, deploy the web app. Existing TestFlight installs should see the change because Release loads `https://getnearcast.app`.
+   Change `app.js`, `map.js`, `styles.css`, or other web files and test them
+   in Safari/PWA. Release/TestFlight continues to load
+   `https://getnearcast.app` until its explicit native promotion.
 
 2. Native debug loop
 
-   Use this when changing Swift, the bridge, native permissions, or iOS-only UI. Run the `Nearcast Dev` scheme from Xcode on Simulator or a plugged-in iPhone. Dev builds can switch between local and production from native diagnostics.
+   Use this for Swift, native permissions, native UI, widgets, Watch, Map,
+   Ask, Plans, and cutover work. Run the **Nearcast Dev** scheme on Simulator
+   or a connected iPhone; the ordinary session is native-only. Use
+   `-nearcast-web` only when a specific compatibility test requires it.
 
 3. TestFlight loop
 
-   Use this for native shell milestones: app identity/signing changes, notification/APNs work, widgets, Live Activities, App Intents, or anything that needs real installed-app behavior. TestFlight should validate the shell, not gate every web UI tweak.
+   Use this for release milestones and installed-app behavior. TestFlight
+   remains a separate compatibility lane until it receives an explicit native
+   promotion; it does not gate every website tweak.
 
 ### Direct-device Nearcast Dev loop
 
@@ -127,7 +170,7 @@ Run the backward-compatibility and freshness contract before Watch releases:
 scripts/test-nearcast-watch-snapshot.sh
 ```
 
-## Fast local loop
+## Compatibility-only local web loop
 
 From the repo root:
 
@@ -141,7 +184,10 @@ Then open:
 open native/ios/Nearcast.xcodeproj
 ```
 
-Run the `Nearcast` scheme on an iOS simulator. The simulator can load:
+Run the `Nearcast Dev` scheme with the `-nearcast-web` launch argument only
+when testing the retained compatibility host. The native-only Dev default does
+not load this server. In that explicit compatibility session, the simulator
+can load:
 
 ```text
 http://127.0.0.1:4177
@@ -153,7 +199,7 @@ For a real iPhone, use the Mac's LAN IP instead:
 http://192.168.x.x:4177
 ```
 
-Set that URL from the native debug sheet in the app.
+Set that URL from native diagnostics in the explicit compatibility session.
 
 ## Production/TestFlight loop
 

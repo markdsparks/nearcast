@@ -4745,6 +4745,32 @@ function nativePreviewHandoffRequest(payload) {
       !initialQuery.trim() || initialQuery.length > 500)) {
     throw new Error("The requested question is invalid. Open Ask and try again.");
   }
+  const planId = payload.planId ?? null;
+  if (planId !== null && (typeof planId !== "string" || !planId.trim() || planId.length > 160 || /[\u0000-\u001F\u007F-\u009F]/.test(planId))) {
+    throw new Error("The requested plan is invalid. Open Plans and try again.");
+  }
+  // A native Agenda row carries the legacy plan's stable ID, but only the
+  // hydrated legacy plan record can authorize its place. This lets a saved
+  // plan remain openable even if it is not in the current native saved-place
+  // cache, without treating a native payload as the source of truth.
+  const focusedPlan = planId ? state.planMemories.find((memory) => memory?.id === planId.trim()) : null;
+  if (planId && !focusedPlan) {
+    throw new Error("That saved plan is no longer available. Open Plans to review your current schedule.");
+  }
+  if (focusedPlan) {
+    const focusedPlace = nativePreviewPlaceRecord(focusedPlan.place);
+    if (!focusedPlace) throw new Error("That plan's place is unavailable. Open Plans to review it.");
+    return {
+      destination: payload.destination,
+      // The plan record, not the native Agenda cache, remains authoritative
+      // for this source place. No forecast refresh is needed just to open a
+      // saved plan's detail/watch sheet.
+      place: { ...focusedPlan.place },
+      targetDate: date,
+      planId: focusedPlan.id,
+      initialQuery: initialQuery?.trim() || null
+    };
+  }
   // The cached native preview may outlive this document. In that case only a
   // still-known active/saved place can be handed back, never an arbitrary URL.
   const current = [state.activePlace, ...(Array.isArray(state.savedPlaces) ? state.savedPlaces : [])]
@@ -4760,6 +4786,7 @@ function nativePreviewHandoffRequest(payload) {
     destination: payload.destination,
     place: { ...match.original },
     targetDate: date,
+    planId: focusedPlan?.id || null,
     initialQuery: initialQuery?.trim() || null
   };
 }
@@ -4801,12 +4828,23 @@ function nativePreviewMapCoversDate(intent) {
 
 async function handoffNativePreview(payload) {
   const request = nativePreviewHandoffRequest(payload);
-  if (request.destination === "ask" && typeof askStreaming !== "undefined" && askStreaming) {
-    throw new Error("Wait for the current Nearcast reply to finish, then try again.");
-  }
   if (nativePreviewHandoffInFlight) throw new Error("Nearcast is already opening a preview destination.");
   nativePreviewHandoffInFlight = true;
   try {
+    // A native Agenda row needs its legacy detail/watch surface—not a fresh
+    // weather load or a date-horizon check. Those checks are appropriate for
+    // map/Ask, but would strand away, long-span, or older saved plans here.
+    if (request.destination === "plans") {
+      if (request.planId) {
+        openPlanWatchForMemory(request.planId, { source: "agenda" });
+      } else {
+        openGlobalMemorySheet({ source: "native" });
+      }
+      return { ok: true };
+    }
+    if (request.destination === "ask" && typeof askStreaming !== "undefined" && askStreaming) {
+      throw new Error("Wait for the current Nearcast reply to finish, then try again.");
+    }
     if (!nativePreviewForecastMatches(request.place)) await loadPlace(request.place);
     // loadPlace deliberately catches errors and may restore the previous place.
     // Do not navigate unless its completed result is the exact requested place.
@@ -4841,7 +4879,10 @@ async function handoffNativePreview(payload) {
         throw error;
       }
     } else if (request.destination === "plans") {
-      openGlobalMemorySheet();
+      // Plans returns above before a weather load. Keep this defensive branch
+      // for future destination expansion rather than accidentally falling
+      // through into a stale forecast dependency.
+      openGlobalMemorySheet({ focusMemoryId: request.planId || "", source: request.planId ? "agenda" : "native" });
     } else if (request.destination === "ask") {
       const focusDayIndex = dayIndex >= 0 ? dayIndex : forecastDailyIndex(state.forecast);
       const targetDate = state.forecast.daily?.time?.[focusDayIndex];

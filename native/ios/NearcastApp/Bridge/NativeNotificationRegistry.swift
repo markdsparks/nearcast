@@ -9,6 +9,7 @@ final class NativeNotificationRegistry: NSObject {
     private let tokenKey = "nearcast.native.apnsToken"
     private var pendingTokenContinuations: [CheckedContinuation<String?, Never>] = []
     private var lastRegistrationError = ""
+    private var hasFreshTokenThisLaunch = false
 
     private override init() {
         super.init()
@@ -78,10 +79,22 @@ final class NativeNotificationRegistry: NSObject {
         ]
     }
 
+    /// Refreshes APNs identity once per process without ever asking permission.
+    /// Stored tokens alone must not pin native enrollments after token rotation.
+    func refreshAuthorizedChannel() async -> [String: Any] {
+        let status = await currentStatus()
+        guard status["permission"] as? String == "granted" else { return status }
+        guard let token = await remoteNotificationToken() else {
+            return ["ok": false, "permission": "granted", "state": "token-unavailable"]
+        }
+        return ["ok": true, "permission": "granted", "state": "ready", "channel": nativeChannelPayload(token: token) as Any]
+    }
+
     func updateDeviceToken(_ deviceToken: Data) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
         UserDefaults.standard.set(token, forKey: tokenKey)
         lastRegistrationError = ""
+        hasFreshTokenThisLaunch = true
         resolveTokenContinuations(token)
     }
 
@@ -103,7 +116,7 @@ final class NativeNotificationRegistry: NSObject {
             lastRegistrationError = "development-remote-delivery-disabled"
             return nil
         }
-        if let token = storedToken(), !token.isEmpty {
+        if hasFreshTokenThisLaunch, let token = storedToken(), !token.isEmpty {
             return token
         }
 

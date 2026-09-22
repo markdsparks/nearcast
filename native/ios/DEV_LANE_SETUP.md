@@ -1,9 +1,11 @@
 # Nearcast Dev — direct iPhone and Watch lane
 
-`Nearcast Dev` is a side-by-side, direct-device build for fast native testing.
-It is deliberately separate from the production/TestFlight install: it has its
-own bundle IDs, App Group, URL scheme, and on-device storage. Installing or
-removing it does not replace the regular Nearcast app or its widgets.
+`Nearcast Dev` is a side-by-side, native-only development build for fast native
+testing. A normal Dev launch starts the native root without constructing the
+retained WebKit host. It is deliberately separate from the
+production/TestFlight install: it has its own bundle IDs, App Group, URL
+scheme, and on-device storage. Installing or removing it does not replace the
+regular Nearcast app or its widgets.
 
 The Dev lane is for the family’s iPhone 17 Pro Max and Apple Watch Ultra 2.
 It is not a TestFlight build and it does not upload anything to App Store
@@ -20,9 +22,12 @@ Connect.
 | Shared App Group | `group.app.nearcast.ios` | `group.app.nearcast.ios.dev` |
 | Deep-link scheme | `nearcast` | `nearcast-dev` |
 
-The Dev build begins on the production Nearcast weather service so it remains
-useful away from the Mac. Use the app’s native diagnostics only when you
-intentionally want to point it at a local Mac server.
+The Dev build uses the production Nearcast weather service—not a loaded
+production web app—so it remains useful away from the Mac. `-nearcast-web` is
+a deliberate, process-only Debug escape for a focused migration/recovery
+check. Only that explicit compatibility session may use native diagnostics to
+point the retained web host at a local Mac server; ordinary Dev testing stays
+native-only.
 
 Remote plan notifications and server-driven Live Activity updates stay off in
 Dev for now. That prevents duplicate alerts and keeps direct experiments from
@@ -100,8 +105,14 @@ Apple Watch Ultra 2: 00008310-000378683A7BA01E
 ```
 
 Pass different identifiers after the command if the test hardware changes.
-The script uses the shared `Nearcast Dev` schemes, the Debug configuration,
-and automatic signing. It never cleans data, removes an app, touches the
+The script defaults to `Nearcast Dev Performance` and the `DevPerformance`
+configuration: optimized Swift/C weather calculations with the exact Debug
+bundle IDs, entitlements, native-only flag, App Group, service endpoints, and
+disabled remote delivery. It does not attach the debugger on launch; symbols
+remain available for Instruments. `Nearcast Dev` / `Debug` remains available
+for source-level stepping (`NEARCAST_DEV_CONFIGURATION=Debug`).
+
+Both modes use automatic signing. The script never cleans data, removes an app, touches the
 TestFlight installation, or uploads a build.
 
 ## Map credential for Dev

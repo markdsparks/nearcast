@@ -124,15 +124,20 @@ enum HRRRSubhourly {
         let minimum = Int64(try payload.sm(5 + order * octets, octets))
         var bits = Bits(bytes: payload, position: (5 + (order + 1) * octets) * 8)
         var references = [Int](), widths = [Int](), lengths = [Int]()
-        for _ in 0..<groups { references.append(try bits.read(referenceBits)) }; bits.align()
+        for group in 0..<groups {
+            if group % 4096 == 0 { try Task.checkCancellation() }
+            references.append(try bits.read(referenceBits))
+        }; bits.align()
         let baseWidth = try rep.u(35)
-        for _ in 0..<groups {
+        for group in 0..<groups {
+            if group % 4096 == 0 { try Task.checkCancellation() }
             let value = try baseWidth + bits.read(widthBits)
             guard value <= 31 else { throw Failure.malformed }; widths.append(value)
         }; bits.align()
         let baseLength = try rep.u(37, 4), increment = try rep.u(41), lastLength = try rep.u(42, 4)
         var total = 0
         for i in 0..<groups {
+            if i % 4096 == 0 { try Task.checkCancellation() }
             let scaled = try bits.read(lengthBits)
             let length = i == groups - 1 ? lastLength : baseLength + scaled * increment
             guard length <= points - total else { throw Failure.malformed }
@@ -142,7 +147,8 @@ enum HRRRSubhourly {
         var values = [Int64](); values.reserveCapacity(points)
         for g in 0..<groups {
             try Task.checkCancellation()
-            for _ in 0..<lengths[g] {
+            for index in 0..<lengths[g] {
+                if index % 4096 == 0 { try Task.checkCancellation() }
                 let value = try references[g] + bits.read(widths[g])
                 guard value <= Int32.max else { throw Failure.malformed }; values.append(Int64(value))
             }
@@ -186,8 +192,15 @@ enum HRRRSubhourly {
 
 final class HRRRSubhourlyClient: Sendable {
     private let transport: RadarChunkClient
-    init(configuration: URLSessionConfiguration = .ephemeral) throws {
+    private let metadataTransport: RadarChunkClient
+    private let cache: HRRRSubhourlyCache
+    init(configuration: URLSessionConfiguration = .ephemeral, cache: HRRRSubhourlyCache = .shared) throws {
         transport = try RadarChunkClient(allowedOrigins: [HRRRSubhourly.origin], configuration: configuration)
+        self.cache = cache
+        // A two-index metadata batch must not consume the selected frame's two
+        // acquisition slots during refresh/playback. Both lanes remain bounded
+        // and use the same origin-only, credential-free transport policy.
+        metadataTransport = try RadarChunkClient(allowedOrigins: [HRRRSubhourly.origin], configuration: configuration)
     }
     func discover(now: Date) async throws -> [HRRRSubhourly.Frame] {
         guard now.timeIntervalSince1970.isFinite else { throw HRRRSubhourly.Failure.invalidIndex }
@@ -199,10 +212,24 @@ final class HRRRSubhourlyClient: Sendable {
             do {
                 let hours = Set(targets.map { Int(ceil($0.timeIntervalSince(cycle) / 3600)) }).sorted()
                 var result: [HRRRSubhourly.Frame] = []
-                for hour in hours {
-                    let urls = try HRRRSubhourly.urls(cycle: cycle, hour: hour)
-                    let data = try await transport.fetchBytes(at: urls.index, maximumBytes: 2 * 1024 * 1024)
-                    result += try HRRRSubhourly.parseIndex(data, cycle: cycle, hour: hour)
+                // Independent advertised-hour indexes can arrive together. Keep
+                // exactly two requests in flight, matching the transport limit;
+                // a partial cycle still fails as a whole and is never published.
+                for start in stride(from: 0, to: hours.count, by: 2) {
+                    try Task.checkCancellation()
+                    let batch = Array(hours[start..<min(hours.count, start + 2)])
+                    result += try await withThrowingTaskGroup(of: [HRRRSubhourly.Frame].self) { group in
+                        for hour in batch {
+                            group.addTask { [metadataTransport] in
+                                let urls = try HRRRSubhourly.urls(cycle: cycle, hour: hour)
+                                let data = try await metadataTransport.fetchBytes(at: urls.index, maximumBytes: 2 * 1024 * 1024)
+                                return try HRRRSubhourly.parseIndex(data, cycle: cycle, hour: hour)
+                            }
+                        }
+                        var frames: [HRRRSubhourly.Frame] = []
+                        for try await values in group { frames += values }
+                        return frames
+                    }
                 }
                 let selected = result.filter { targets.contains($0.validTime) }.sorted { $0.validTime < $1.validTime }
                 guard selected.count == 24 else { throw HRRRSubhourly.Failure.unavailable }
@@ -211,11 +238,380 @@ final class HRRRSubhourlyClient: Sendable {
         }
         throw HRRRSubhourly.Failure.unavailable
     }
-    func load(_ frame: HRRRSubhourly.Frame, bounds: NativeRadarPresentationContract.Viewport) async throws -> NativeRadarSeamEstimation.Frame {
-        let expected = try HRRRSubhourly.urls(cycle: frame.cycle, hour: (frame.leadMinutes + 59) / 60).data
-        guard expected == frame.url else { throw HRRRSubhourly.Failure.invalidIndex }
-        let data = try await transport.fetchRange(at: frame.url, range: frame.range)
-        let task = Task.detached(priority: .userInitiated) { try HRRRSubhourly.decode(data, frame: frame, bounds: bounds) }
-        return try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+    func load(_ frame: HRRRSubhourly.Frame, bounds: NativeRadarPresentationContract.Viewport,
+              width: Int = 384, height: Int = 512,
+              priority: HRRRSubhourlyCache.Priority = .foreground) async throws -> NativeRadarSeamEstimation.Frame {
+        try await cache.load(frame, bounds: bounds, width: width, height: height, priority: priority,
+            fetch: { [transport] in try await transport.fetchRange(at: frame.url, range: frame.range) },
+            decode: { try HRRRSubhourly.decode($0, frame: frame, bounds: bounds, width: width, height: height) })
+    }
+    /// A rendered-frame producer may gain a foreground subscriber without
+    /// making a second numeric request. Promote its existing acquisition too.
+    func promote(_ frame: HRRRSubhourly.Frame, bounds: NativeRadarPresentationContract.Viewport,
+                 width: Int = 384, height: Int = 512) async {
+        await cache.promote(frame, bounds: bounds, width: width, height: height)
+    }
+}
+
+/// App-lifetime, public-source-only acquisition and sampled-field retention.
+/// Source ranges are independent of the camera; sampled fields include exact
+/// geometry. No national decoded grid is retained. A successful field has only
+/// one UInt8 texture and one UInt8 validity mask (24 regular forecast frames fit
+/// within the default 24 MiB numeric budget).
+actor HRRRSubhourlyCache {
+    static let shared = HRRRSubhourlyCache()
+    enum Priority: Int, Sendable { case prefetch = 0, foreground = 1 }
+
+    struct SourceKey: Hashable, Sendable {
+        let url: String
+        let lowerByte: Int, upperByte: Int
+        let cycle: Date
+        let leadMinutes: Int
+        let decoderVersion = 1
+        init(_ frame: HRRRSubhourly.Frame) {
+            url = frame.url.absoluteString
+            lowerByte = frame.range.lowerBound; upperByte = frame.range.upperBound
+            cycle = frame.cycle; leadMinutes = frame.leadMinutes
+        }
+    }
+    struct FieldKey: Hashable, Sendable {
+        let source: SourceKey
+        let west: Double, south: Double, east: Double, north: Double
+        let width: Int, height: Int
+        init(frame: HRRRSubhourly.Frame, bounds: NativeRadarPresentationContract.Viewport, width: Int, height: Int) {
+            source = SourceKey(frame)
+            west = bounds.west; south = bounds.south; east = bounds.east; north = bounds.north
+            self.width = width; self.height = height
+        }
+    }
+    struct Snapshot: Sendable {
+        let source: HRRRWorkCacheStatistics
+        let numeric: HRRRWorkCacheStatistics
+    }
+
+    private let source: HRRRSharedWorkStore<SourceKey, Data>
+    private let numeric: HRRRSharedWorkStore<FieldKey, NativeRadarSeamEstimation.Frame>
+    private var generation: UInt64 = 0
+
+    init(sourceByteBudget: Int = 32 * 1024 * 1024, numericByteBudget: Int = 24 * 1024 * 1024,
+         maximumEntries: Int = 32, maximumAge: TimeInterval = 30 * 60) {
+        source = .init(byteBudget: min(32 * 1024 * 1024, max(0, sourceByteBudget)), maximumEntries: maximumEntries,
+                       maximumAge: maximumAge, maximumValueBytes: 4 * 1024 * 1024, cost: { $0.count })
+        numeric = .init(byteBudget: min(24 * 1024 * 1024, max(0, numericByteBudget)), maximumEntries: maximumEntries,
+                        maximumAge: maximumAge, maximumValueBytes: 2 * 1024 * 1024,
+                        cost: { $0.texture.bytes.count + $0.validDataMask.count })
+    }
+
+    func load(_ frame: HRRRSubhourly.Frame, bounds: NativeRadarPresentationContract.Viewport,
+              width: Int, height: Int, priority: Priority = .foreground,
+              fetch: @escaping @Sendable () async throws -> Data,
+              decode: @escaping @Sendable (Data) throws -> NativeRadarSeamEstimation.Frame) async throws -> NativeRadarSeamEstimation.Frame {
+        try Task.checkCancellation()
+        guard (1...1080).contains(frame.leadMinutes), frame.leadMinutes % 15 == 0,
+              frame.range.lowerBound >= 0, frame.range.upperBound < 2_000_000_000,
+              frame.range.count <= 4 * 1024 * 1024,
+              frame.cycle.timeIntervalSince1970.isFinite, frame.cycle.timeIntervalSince1970 >= 0,
+              frame.validTime.timeIntervalSince1970 < 253_402_300_800 else { throw HRRRSubhourly.Failure.invalidIndex }
+        let expectedURL = try HRRRSubhourly.urls(cycle: frame.cycle, hour: (frame.leadMinutes + 59) / 60).data
+        guard frame.url == expectedURL else { throw HRRRSubhourly.Failure.invalidIndex }
+        guard (8...1024).contains(width), (8...1024).contains(height) else { throw HRRRSubhourly.Failure.malformed }
+        let key = FieldKey(frame: frame, bounds: bounds, width: width, height: height)
+        let expectedBounds = RadarChunkContract.Bounds(minLat: bounds.south, minLon: bounds.west,
+                                                       maxLat: bounds.north, maxLon: bounds.east)
+        try expectedBounds.validate()
+        let expectedTime = Int64(frame.validTime.timeIntervalSince1970 * 1000)
+        let requestGeneration = generation
+        if priority == .foreground { await source.promote(key.source) }
+        let lease = try await numeric.acquire(key, priority: priority) { [self, source] jobPriority in
+            let bytes = try await source.acquire(key.source, priority: jobPriority) { _ in
+                let data = try await fetch()
+                try Task.checkCancellation()
+                guard data.count == frame.range.count else { throw HRRRSubhourly.Failure.malformed }
+                return data
+            }
+            do {
+                try Task.checkCancellation()
+                // This closure runs on the shared store's bounded detached job,
+                // never on the UI or cache actor. Full GRIB decode precedes raw
+                // byte retention, including cycle/time and source-grid checks.
+                let field = try decode(bytes.value)
+                try Task.checkCancellation()
+                guard field.bounds == expectedBounds, field.texture.width == width, field.texture.height == height,
+                      field.validTimeMilliseconds == expectedTime else { throw HRRRSubhourly.Failure.timeMismatch }
+                // A field queued before memory pressure may only start its
+                // source request after the purge. Carry the outer generation
+                // as well, so that late request cannot refill raw retention.
+                await source.release(bytes, validated: mayRetain(requestGeneration))
+                return field
+            } catch {
+                await source.release(bytes, validated: false)
+                throw error
+            }
+        }
+        do {
+            try Task.checkCancellation()
+            await numeric.release(lease, validated: mayRetain(requestGeneration))
+            try Task.checkCancellation()
+            return lease.value
+        } catch {
+            await numeric.release(lease, validated: false)
+            throw error
+        }
+    }
+
+    /// Purge retained values without disrupting current consumers. In-flight
+    /// work from before this purge cannot repopulate either completed cache.
+    func removeAll() async {
+        generation &+= 1
+        await numeric.removeAll()
+        await source.removeAll()
+    }
+    /// Only speculative consumers are canceled. A foreground subscriber that
+    /// joined the same work keeps the download/decode alive.
+    func cancelPrefetch() async { await numeric.cancelPrefetch() }
+    func promote(_ frame: HRRRSubhourly.Frame, bounds: NativeRadarPresentationContract.Viewport,
+                 width: Int, height: Int) async {
+        let key = FieldKey(frame: frame, bounds: bounds, width: width, height: height)
+        await numeric.promote(key, protectConsumers: true)
+        await source.promote(key.source)
+    }
+    func snapshot() async -> Snapshot { .init(source: await source.snapshot(), numeric: await numeric.snapshot()) }
+    private func mayRetain(_ requestGeneration: UInt64) -> Bool { requestGeneration == generation }
+}
+
+/// Counters contain no URL, source key, coordinates, credentials or user data.
+struct HRRRWorkCacheStatistics: Sendable {
+    let cachedBytes: Int, cachedEntries: Int, activeJobs: Int, queuedJobs: Int, consumers: Int
+    let hits: Int, joins: Int, loads: Int, failures: Int, cancellations: Int, promotions: Int, evictions: Int
+    let totalLoadMilliseconds: Double
+}
+
+/// Two concurrent jobs, a bounded priority queue, consumer-safe cancellation,
+/// and validated-only LRU retention. Separate instantiations own source bytes
+/// and sampled fields, so one viewport cannot cancel another viewport's bytes.
+private actor HRRRSharedWorkStore<Key: Hashable & Sendable, Value: Sendable> {
+    typealias Priority = HRRRSubhourlyCache.Priority
+    typealias Loader = @Sendable (Priority) async throws -> Value
+    struct Lease: Sendable {
+        let value: Value
+        fileprivate let key: Key
+        fileprivate let jobID: UUID?
+        fileprivate let consumerID: UUID
+    }
+    private struct Cached {
+        let value: Value, bytes: Int, storedAt: Date
+        var access: UInt64
+    }
+    private struct Consumer {
+        let waiter: HRRRWorkWaiter<Lease>
+        var priority: Priority
+    }
+    private struct Job {
+        let id: UUID, sequence: UInt64, generation: UInt64, load: Loader
+        var priority: Priority
+        var task: Task<Void, Never>?
+        var consumers: [UUID: Consumer]
+        var leases: [UUID: Priority] = [:]
+        var value: Value?
+    }
+    private let byteBudget: Int, maximumEntries: Int, maximumValueBytes: Int
+    private let maximumAge: TimeInterval
+    private let cost: @Sendable (Value) -> Int
+    private var cached: [Key: Cached] = [:], jobs: [Key: Job] = [:]
+    private var running: Set<UUID> = []
+    private var cachedBytes = 0, hits = 0, joins = 0, loads = 0, failures = 0, cancellations = 0, promotions = 0, evictions = 0
+    private var sequence: UInt64 = 0, generation: UInt64 = 0
+    private var totalLoadMilliseconds = 0.0
+
+    init(byteBudget: Int, maximumEntries: Int, maximumAge: TimeInterval, maximumValueBytes: Int,
+         cost: @escaping @Sendable (Value) -> Int) {
+        self.byteBudget = byteBudget
+        self.maximumEntries = min(32, max(0, maximumEntries))
+        self.maximumAge = maximumAge.isFinite ? min(3600, max(0, maximumAge)) : 0
+        self.maximumValueBytes = maximumValueBytes
+        self.cost = cost
+    }
+
+    func acquire(_ key: Key, priority: Priority, load: @escaping Loader) async throws -> Lease {
+        let consumerID = UUID(), waiter = HRRRWorkWaiter<Lease>()
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                waiter.attach(continuation)
+                guard !waiter.isFinished else { return }
+                evictExpired()
+                if var hit = cached[key] {
+                    hits += 1; sequence &+= 1; hit.access = sequence; cached[key] = hit
+                    waiter.finish(.success(.init(value: hit.value, key: key, jobID: nil, consumerID: consumerID)))
+                    return
+                }
+                if var job = jobs[key] {
+                    guard job.consumers.count + job.leases.count < 16 else {
+                        waiter.finish(.failure(RadarChunkContract.Failure.requestLimit)); return
+                    }
+                    joins += 1
+                    if priority.rawValue > job.priority.rawValue { job.priority = priority; promotions += 1 }
+                    if let value = job.value {
+                        if waiter.finish(.success(.init(value: value, key: key, jobID: job.id, consumerID: consumerID))) {
+                            job.leases[consumerID] = priority
+                        }
+                    } else { job.consumers[consumerID] = Consumer(waiter: waiter, priority: priority) }
+                    jobs[key] = job
+                    pump()
+                    return
+                }
+                guard jobs.count < 32 else { waiter.finish(.failure(RadarChunkContract.Failure.requestLimit)); return }
+                sequence &+= 1
+                jobs[key] = Job(id: UUID(), sequence: sequence, generation: generation, load: load, priority: priority,
+                                consumers: [consumerID: Consumer(waiter: waiter, priority: priority)])
+                pump()
+            }
+        }, onCancel: {
+            waiter.finish(.failure(CancellationError()))
+            Task { await self.cancel(key: key, consumerID: consumerID) }
+        })
+    }
+
+    func promote(_ key: Key, protectConsumers: Bool = false) {
+        guard var job = jobs[key] else { return }
+        if job.priority == .prefetch { job.priority = .foreground; promotions += 1 }
+        if protectConsumers {
+            // This producer now has a foreground consumer in the rendered
+            // tier. Keep its single numeric subscription alive; the producer
+            // task still owns cancellation when its last render consumer goes.
+            for id in job.consumers.keys { job.consumers[id]?.priority = .foreground }
+        }
+        jobs[key] = job
+        pump()
+    }
+
+    func release(_ lease: Lease, validated: Bool) {
+        guard var job = jobs[lease.key], job.id == lease.jobID,
+              job.leases.removeValue(forKey: lease.consumerID) != nil else { return }
+        let bytes = cost(lease.value)
+        if validated, job.generation == generation, cached[lease.key] == nil,
+           maximumEntries > 0, maximumAge > 0, bytes <= byteBudget {
+            evictExpired()
+            while cached.count >= maximumEntries || cachedBytes > byteBudget - bytes {
+                guard let oldest = cached.min(by: { $0.value.access < $1.value.access })?.key else { break }
+                remove(oldest)
+            }
+            sequence &+= 1
+            cached[lease.key] = Cached(value: lease.value, bytes: bytes, storedAt: Date(), access: sequence)
+            cachedBytes += bytes
+        }
+        if job.consumers.isEmpty && job.leases.isEmpty { jobs.removeValue(forKey: lease.key) }
+        else { jobs[lease.key] = job }
+    }
+
+    func removeAll() { generation &+= 1; cached.removeAll(); cachedBytes = 0 }
+    func cancelPrefetch() {
+        for (key, job) in jobs {
+            for (id, consumer) in job.consumers where consumer.priority == .prefetch {
+                consumer.waiter.finish(.failure(CancellationError()))
+                cancel(key: key, consumerID: id)
+            }
+        }
+    }
+    func snapshot() -> HRRRWorkCacheStatistics {
+        evictExpired()
+        return .init(cachedBytes: cachedBytes, cachedEntries: cached.count, activeJobs: running.count,
+                     queuedJobs: jobs.values.filter { $0.task == nil && $0.value == nil }.count,
+                     consumers: jobs.values.reduce(0) { $0 + $1.consumers.count + $1.leases.count },
+                     hits: hits, joins: joins, loads: loads, failures: failures, cancellations: cancellations,
+                     promotions: promotions, evictions: evictions, totalLoadMilliseconds: totalLoadMilliseconds)
+    }
+
+    private func pump() {
+        while running.count < 2 {
+            guard let key = jobs.filter({ $0.value.task == nil && $0.value.value == nil && !$0.value.consumers.isEmpty })
+                .min(by: { a, b in
+                    a.value.priority == b.value.priority ? a.value.sequence < b.value.sequence : a.value.priority.rawValue > b.value.priority.rawValue
+                })?.key, var job = jobs[key] else { return }
+            let id = job.id, load = job.load, priority = job.priority
+            running.insert(id); loads += 1
+            // Speculative work is bounded and ordered by the logical queue.
+            // Running at userInitiated avoids leaving a foreground subscriber
+            // joined to work at a permanently lower executor priority.
+            job.task = Task.detached(priority: .userInitiated) { [self] in
+                let start = ContinuousClock.now
+                let result: Result<Value, Error>
+                do {
+                    let value = try await load(priority)
+                    try Task.checkCancellation()
+                    let bytes = cost(value)
+                    guard bytes > 0 && bytes <= maximumValueBytes else { throw HRRRSubhourly.Failure.malformed }
+                    result = .success(value)
+                } catch { result = .failure(error) }
+                let duration = start.duration(to: .now).components
+                let milliseconds = Double(duration.seconds) * 1000 + Double(duration.attoseconds) / 1e15
+                await complete(key: key, id: id, result: result, milliseconds: milliseconds)
+            }
+            jobs[key] = job
+        }
+    }
+
+    private func complete(key: Key, id: UUID, result: Result<Value, Error>, milliseconds: Double) {
+        running.remove(id)
+        totalLoadMilliseconds += max(0, milliseconds)
+        guard var job = jobs[key], job.id == id else { pump(); return }
+        job.task = nil
+        switch result {
+        case .success(let value):
+            job.value = value
+            for (consumerID, consumer) in job.consumers {
+                if consumer.waiter.finish(.success(.init(value: value, key: key, jobID: id, consumerID: consumerID))) {
+                    job.leases[consumerID] = consumer.priority
+                }
+            }
+            job.consumers.removeAll()
+            if job.leases.isEmpty { jobs.removeValue(forKey: key) }
+            else { jobs[key] = job }
+        case .failure(let error):
+            if error is CancellationError { cancellations += 1 } else { failures += 1 }
+            jobs.removeValue(forKey: key)
+            for consumer in job.consumers.values { consumer.waiter.finish(.failure(error)) }
+        }
+        pump()
+    }
+
+    private func cancel(key: Key, consumerID: UUID) {
+        guard var job = jobs[key] else { return }
+        let removed = job.consumers.removeValue(forKey: consumerID) != nil || job.leases.removeValue(forKey: consumerID) != nil
+        guard removed else { return }
+        if job.consumers.isEmpty && job.leases.isEmpty {
+            jobs.removeValue(forKey: key)
+            cancellations += 1
+            job.task?.cancel()
+        } else { jobs[key] = job }
+        pump()
+    }
+    private func evictExpired() {
+        let now = Date()
+        for (key, entry) in cached where now < entry.storedAt || now.timeIntervalSince(entry.storedAt) >= maximumAge { remove(key) }
+    }
+    private func remove(_ key: Key) {
+        if let entry = cached.removeValue(forKey: key) { cachedBytes -= entry.bytes; evictions += 1 }
+    }
+}
+
+private final class HRRRWorkWaiter<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var result: Result<Value, Error>?
+    var isFinished: Bool { lock.lock(); defer { lock.unlock() }; return result != nil }
+    func attach(_ continuation: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if let result { lock.unlock(); continuation.resume(with: result) }
+        else { self.continuation = continuation; lock.unlock() }
+    }
+    @discardableResult func finish(_ result: Result<Value, Error>) -> Bool {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return false }
+        self.result = result
+        let continuation = continuation; self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
+        return true
     }
 }

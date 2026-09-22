@@ -73,7 +73,8 @@ const sandbox = {
   activeMapSource: (frame) => frame.source,
   rawMapTimelineTimestamp: (frame) => frame.timestamp,
   exitImmersiveMap: () => { calls.push(["exit-map"]); mapState.immersive = false; },
-  openGlobalMemorySheet: () => calls.push(["plans"]),
+  openGlobalMemorySheet: (options = {}) => calls.push(["plans", options]),
+  openPlanWatchForMemory: (id, options = {}) => calls.push(["plan", id, options]),
   openAISheet: (options) => {
     calls.push(["ask", options]);
     if (options.surface) sandbox.rememberNearcastSurfaceContext(options.surface);
@@ -261,7 +262,8 @@ state.activePlace = { ...away };
 state.forecastPlaceId = away.id;
 calls.length = 0;
 await handoff({ version: 1, destination: "plans", place: context.savedPlaces[0] });
-assert.deepEqual(calls, [["plans"]]);
+assert.deepEqual(calls.map(([kind]) => kind), ["plans"]);
+assert.equal(calls[0][1]?.source, "native", "generic Plans retains its native handoff source after a recreated preview context");
 
 state.activePlace = { ...home };
 state.forecastPlaceId = home.id;
@@ -284,6 +286,62 @@ assert.equal(plain(run('nativePreviewPlaceRecord({ id: "country", name: "Test", 
 assert.equal(plain(run('nativePreviewPlaceRecord({ id: "country", name: "Test", latitude: 40, longitude: -90 })')).countryCode, undefined, "old records remain compatible without a country field");
 state.activePlace = null;
 assert.throws(() => run("buildNativePreviewContext()"), /Open a place/);
+
+
+// Agenda’s read-only native list must be able to return to both the full
+// legacy Plans surface and one exact legacy plan without reloading weather.
+// In particular, a saved plan can be outside the normal forecast horizon or
+// use an away place not currently loaded in the retained page.
+state.activePlace = { ...home };
+state.forecastPlaceId = home.id;
+state.savedPlaces = [{ ...away }];
+const agendaPlan = {
+  id: "soccer-plan",
+  place: { ...away }
+};
+state.planMemories = [{ text: "private plan" }, agendaPlan];
+load = async () => {
+  calls.push(["unexpected-load"]);
+  throw new Error("Agenda Plans should not load weather first");
+};
+
+calls.length = 0;
+const genericAgendaResult = await handoff({
+  version: 1,
+  destination: "plans",
+  place: context.selectedPlace,
+  targetDate: "2040-01-01"
+});
+assert.deepEqual(plain(genericAgendaResult), { ok: true });
+assert.deepEqual(calls.map(([kind]) => kind), ["plans"],
+  "generic native Plans bypasses forecast loading and date-horizon checks");
+assert.equal(calls[0][1]?.source, "native",
+  "generic native Plans records its native source without changing a watch");
+
+calls.length = 0;
+const exactAgendaResult = await handoff({
+  version: 1,
+  destination: "plans",
+  // The plan record, rather than this selected-place payload, is authoritative.
+  place: context.selectedPlace,
+  targetDate: "2040-01-01",
+  planId: "soccer-plan"
+});
+assert.deepEqual(plain(exactAgendaResult), { ok: true });
+assert.deepEqual(calls.map(([kind]) => kind), ["plan"],
+  "an exact Agenda plan opens directly without weather loading");
+assert.equal(calls[0][1], "soccer-plan");
+assert.equal(calls[0][2]?.source, "agenda");
+assert.equal(calls.some(([kind]) => kind === "unexpected-load"), false);
+
+calls.length = 0;
+await assert.rejects(handoff({
+  version: 1,
+  destination: "plans",
+  place: context.selectedPlace,
+  planId: "missing-plan"
+}), /no longer available/);
+assert.deepEqual(calls, [], "a stale Agenda plan identity never falls back to another plan");
 
 // Run the actual enhancement guard: a later async HRRR result must not erase
 // legitimate longer NDFD coverage after a successful dated handoff.
@@ -332,4 +390,4 @@ assert.equal(radarState.frameIndex, 1, "closer previous-day sample cannot displa
 radarState.openIntent = null;
 assert.equal(radarSandbox.applyRawMapEnhancement({ frames: shortForecast, forecast: shortForecast, observed: [] }), 1, "ordinary Now map still accepts enhanced data");
 
-console.log("PASS native preview context privacy, version gates, exact-place/date handoff and failed-load isolation");
+console.log("PASS native preview context privacy, version gates, exact-place/date handoff, Agenda Plans routing and failed-load isolation");

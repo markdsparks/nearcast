@@ -890,10 +890,175 @@ var sameUnitInvalidation = ownedPublication
 sameUnitInvalidation.isAvailable = false
 sameUnitInvalidation.nativeWeatherInvalidation = true
 require(!sameUnitInvalidation.preservingNewerWeather(from: ownedPublication).hasWeatherData, "an explicit same-unit native invalidation does not resurrect stored weather")
+
+// Current Location travel does not change the phone-owned selection pair.
+// Exercise the atomic store as well as the merge helper: origin weather must
+// not be restored when destination weather fails but its alert succeeds.
+do {
+    let travelDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("nearcast-widget-travel-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: travelDirectory) }
+    let travelStore = NearcastWidgetPublicationFileStore(directory: travelDirectory)
+    let currentPlace = NearcastWidgetPlace(id: "current-location", name: "Public origin", displayName: nil,
+        admin1: nil, country: nil, countryCode: nil, followsCurrentLocation: true,
+        latitude: 38, longitude: -90, ownerRevision: 3, publicationGeneration: 8)
+    var originWeather = ownedPublication
+    originWeather.weatherSavedAt = now
+    originWeather.isAvailable = true
+    originWeather.nativeWeatherInvalidation = false
+    originWeather.timeline = visual.timeline
+    originWeather.daily = visual.daily
+    originWeather.canonicalEventId = "origin-event"
+    originWeather.canonicalEventHeadline = "Origin weather story"
+    originWeather.confidenceHeadline = "Origin confidence"
+    originWeather.clearOfficialAlert(checkedAt: now - 60)
+    require(travelStore.commit(.init(snapshot: originWeather, place: currentPlace)), "travel regression starts with durable origin weather")
+
+    var destinationUnavailable = originWeather.expiringCompanionContent(at: now)
+    destinationUnavailable.placeName = "Current Location"
+    destinationUnavailable.isAvailable = false
+    destinationUnavailable.nativeWeatherInvalidation = true
+    destinationUnavailable.weatherSavedAt = 0
+    destinationUnavailable.timeline = nil
+    destinationUnavailable.daily = nil
+    destinationUnavailable.clearCanonicalEvent()
+    destinationUnavailable.clearForecastConfidence()
+    destinationUnavailable.clearOfficialAlert(checkedAt: now)
+    destinationUnavailable.alertId = "destination-alert"
+    destinationUnavailable.alertTitle = "Destination warning"
+    destinationUnavailable.alertExpiresAt = now + 600
+    let unavailableResult = NearcastWidgetSnapshotStore.saveRefreshResult(destinationUnavailable,
+        commit: { travelStore.commit(.init(snapshot: $0, place: currentPlace)) },
+        current: {
+            guard case .valid(let publication) = travelStore.read() else { fatalError("Missing travel publication") }
+            return publication.snapshot
+        })
+    require(!unavailableResult.hasWeatherData && unavailableResult.weatherSavedAt == 0,
+        "failed destination weather remains unavailable after same-generation atomic freshness arbitration")
+    require(unavailableResult.timeline == nil && unavailableResult.daily == nil,
+        "known travel cannot resurrect origin forecast rows")
+    require(unavailableResult.canonicalEventId == nil && unavailableResult.confidenceHeadline == nil,
+        "known travel cannot resurrect origin event or confidence copy")
+    require(unavailableResult.alertId == "destination-alert" && unavailableResult.placeName == "Current Location",
+        "the unavailable travel result retains a successfully refreshed destination alert")
+    guard case .valid(let travelPublication) = travelStore.read() else { fatalError("Missing travel publication") }
+    require(travelPublication.place == currentPlace && travelPublication.snapshot.publicationGeneration == 8,
+        "extension travel invalidation does not alter phone-owned selection or publication authority")
+
+    var destinationWeather = unavailableResult
+    destinationWeather.isAvailable = true
+    destinationWeather.weatherSavedAt = now + 1
+    destinationWeather.temperature = 81
+    require(travelStore.commit(.init(snapshot: destinationWeather, place: currentPlace)),
+        "a successful destination weather retry commits within the same phone generation")
+    guard case .valid(let recovered) = travelStore.read() else { fatalError("Missing recovered travel publication") }
+    require(recovered.snapshot.hasWeatherData && recovered.snapshot.temperature == 81 && recovered.snapshot.nativeWeatherInvalidation == false,
+        "successful destination weather clears the inherited intentional invalidation")
+}
+
 var renamedPublication = ownedPublication
 renamedPublication.placeName = "New alias"
 require(renamedPublication.mergingWeather(from: ownedPublication).placeName == "New alias", "native place labels survive weather merges")
 let ownedRoundTrip = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(metricInvalidation))
 require(ownedRoundTrip.ownerRevision == 3 && ownedRoundTrip.publicationGeneration == 8, "publication authority survives snapshot serialization")
+
+do {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("nearcast-location-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = NearcastWidgetPublicationFileStore(directory: directory)
+    var selection = NearcastWidgetPlace(id: "current-location", name: "Origin", displayName: nil,
+        admin1: nil, country: nil, countryCode: nil, followsCurrentLocation: true,
+        latitude: 38, longitude: -90, ownerRevision: 3, publicationGeneration: 8)
+    let origin = NearcastCompanionLocation(latitude: 38, longitude: -90, resolvedAt: now - 60)
+    let destination = NearcastCompanionLocation(latitude: 42, longitude: -87, resolvedAt: now)
+    var original = ownedPublication
+    original.isAvailable = true
+    original.nativeWeatherInvalidation = false
+    original.weatherSavedAt = now - 60
+    original.weatherLocation = origin
+    original.alertLocation = origin
+    original.alertTitle = "Origin warning"
+    original.alertExpiresAt = now + 3600
+    original.alertSavedAt = now - 30
+    original.alertStateReady = true
+    require(store.commit(.init(snapshot: original, place: selection)), "provenance fixture commits")
+    let moved = original.preparingWeather(at: destination, selected: selection)
+    require(!moved.hasWeatherData && moved.alertTitle == nil && moved.alertStateReady == false,
+        "known travel immediately removes origin weather and warning without claiming all-clear")
+    require(store.commit(.init(snapshot: moved, place: selection)), "destination invalidation is durable before network fetch")
+    var late = original
+    late.publicationGeneration = 9
+    selection.publicationGeneration = 9
+    require(store.commit(.init(snapshot: late, place: selection)), "late phone metadata can advance authority")
+    guard case .valid(let unavailable) = store.read() else { fatalError("missing publication") }
+    require(!unavailable.snapshot.hasWeatherData && unavailable.snapshot.weatherLocation == destination && unavailable.snapshot.alertTitle == nil,
+        "late origin phone publication cannot resurrect weather or warning after failed travel fetch")
+    var fresh = unavailable.snapshot
+    fresh.isAvailable = true
+    fresh.nativeWeatherInvalidation = false
+    fresh.weatherSavedAt = now - 120 // destination forecast may be issued before origin forecast
+    fresh.temperature = 62
+    fresh.alertLocation = destination
+    fresh.alertTitle = "Destination warning"
+    fresh.alertExpiresAt = now + 600
+    fresh.alertSavedAt = now
+    fresh.alertStateReady = true
+    require(store.commit(.init(snapshot: fresh, place: selection)), "destination success replaces unavailable weather even with older issue time")
+    let repeatLocation = NearcastCompanionLocation(latitude: 42.001, longitude: -87, resolvedAt: now + 30)
+    let repeated = fresh.preparingWeather(at: repeatLocation, selected: selection)
+    require(repeated.hasWeatherData && repeated.temperature == 62 && repeated.alertTitle == "Destination warning",
+        "repeated same-destination fetch failure preserves valid destination weather and alert")
+    require(store.commit(.init(snapshot: repeated, place: selection)), "same-destination recovery preparation commits")
+    require(store.commit(.init(snapshot: fresh, place: selection)), "older same-place response remains mergeable")
+    guard case .valid(let sameDestination) = store.read() else { fatalError("missing publication") }
+    require(sameDestination.snapshot.weatherLocation?.resolvedAt == repeatLocation.resolvedAt,
+        "same-place response cannot roll back location resolution ordering")
+    let elsewhere = NearcastCompanionLocation(latitude: 44, longitude: -85, resolvedAt: now + 60)
+    let secondMove = repeated.preparingWeather(at: elsewhere, selected: selection)
+    require(store.commit(.init(snapshot: secondMove, place: selection)), "second move invalidates destination one")
+    require(store.commit(.init(snapshot: fresh, place: selection)), "late destination-one response is arbitrated atomically")
+    guard case .valid(let latest) = store.read() else { fatalError("missing publication") }
+    require(latest.snapshot.weatherLocation == elsewhere && !latest.snapshot.hasWeatherData && latest.snapshot.alertTitle == nil,
+        "out-of-order destination response cannot overwrite newest resolved location")
+    var unitChange = late
+    unitChange.publicationGeneration = 10
+    unitChange.windUnit = "km/h"
+    selection.publicationGeneration = 10
+    require(store.commit(.init(snapshot: unitChange, place: selection)), "phone unit change retains publication authority after travel")
+    guard case .valid(let metric) = store.read() else { fatalError("missing metric publication") }
+    require(metric.snapshot.windUnit == "km/h" && !metric.snapshot.hasWeatherData &&
+        metric.snapshot.weatherLocation == elsewhere && metric.snapshot.alertTitle == nil,
+        "unit change neither relabels old numbers nor resurrects origin weather or alerts")
+    var legacyTravel = original
+    legacyTravel.weatherLocation = nil
+    legacyTravel.alertLocation = nil
+    let legacyMoved = legacyTravel.preparingWeather(at: destination, selected: selection)
+    require(!legacyMoved.hasWeatherData && legacyMoved.alertTitle == nil,
+        "pre-provenance current-location snapshot safely invalidates on first known move")
+    let legacyStayed = legacyTravel.preparingWeather(at: origin, selected: selection)
+    require(legacyStayed.hasWeatherData && legacyStayed.alertTitle == "Origin warning",
+        "pre-provenance snapshot at its phone anchor retains valid cache")
+    let smallStep = original.preparingWeather(at: .init(latitude: 38.01, longitude: -90, resolvedAt: now), selected: selection)
+    let walkedFarther = smallStep.preparingWeather(at: .init(latitude: 38.02, longitude: -90, resolvedAt: now + 20), selected: selection)
+    require(smallStep.hasWeatherData && !walkedFarther.hasWeatherData,
+        "small failed-refresh movements accumulate against weather source rather than a drifting GPS anchor")
+    let decoded = try decoder.decode(NearcastWidgetSnapshot.self, from: encoder.encode(latest.snapshot))
+    require(decoded.weatherLocation == elsewhere, "location provenance survives process and transport serialization")
+    var invalid = fresh
+    invalid.publicationGeneration = selection.publicationGeneration
+    invalid.weatherLocation = .init(latitude: 91, longitude: 0, resolvedAt: now)
+    require(!store.commit(.init(snapshot: invalid, place: selection)), "invalid coordinates fail closed")
+    let emptyStore = NearcastWidgetPublicationFileStore(directory: directory.appendingPathComponent("first-publication"))
+    var wrongAlert = fresh
+    wrongAlert.publicationGeneration = selection.publicationGeneration
+    wrongAlert.alertLocation = origin
+    require(emptyStore.commit(.init(snapshot: wrongAlert, place: selection)), "first location-scoped publication commits")
+    guard case .valid(let first) = emptyStore.read() else { fatalError("missing first publication") }
+    require(first.snapshot.hasWeatherData && first.snapshot.alertTitle == nil && first.snapshot.alertStateReady == false,
+        "first publication also strips foreign-location alerts without claiming all-clear")
+    let dateLineA = NearcastCompanionLocation(latitude: 0, longitude: 179.999, resolvedAt: now)
+    let dateLineB = NearcastCompanionLocation(latitude: 0, longitude: -179.999, resolvedAt: now)
+    require(dateLineA.matches(dateLineB), "nearby fixes across date line do not count as travel")
+}
 
 print("PASS  Nearcast Watch snapshot trust contract")

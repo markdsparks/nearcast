@@ -28,6 +28,7 @@ run_portable_checks() {
     sw.js \
     raw-map-runtime.js \
     radar-seam-engine.js \
+    workers/plan-watch-ownership.mjs \
     workers/radar-capability.mjs \
     workers/shared-forecast-service.mjs \
     workers/radar-generation-consumer.mjs
@@ -40,6 +41,7 @@ run_portable_checks() {
   for smoke in \
     weather-truth-fixtures.mjs \
     plan-watch-receipt-smoke.mjs \
+    plan-watch-ownership-test.mjs \
     material-event-surfaces-smoke.mjs \
     product-activation-smoke.mjs \
     ai-operon-smoke.mjs \
@@ -66,6 +68,7 @@ run_portable_checks() {
     forecast-journey-map-smoke.mjs \
     map-radar-experience-smoke.mjs \
     radar-capability-smoke.mjs \
+    native-plan-notification-owner-test.mjs \
     live-activity-smoke.mjs \
     radar-generation-consumer-smoke.mjs \
     radar-generation-plan-queue-smoke.mjs \
@@ -115,10 +118,18 @@ run_native_model_checks() {
     printf 'FAIL  Native model checks require macOS and Xcode.\n' >&2
     exit 1
   fi
+  bash "$ROOT/scripts/test-native-dev-cutover-configuration.sh"
+  bash "$ROOT/scripts/test-native-dev-performance-configuration.sh"
+  bash "$ROOT/scripts/test-native-release-cutover-gate.sh"
   "$ROOT/scripts/test-nearcast-watch-snapshot.sh"
+  bash "$ROOT/scripts/test-native-watch-sync.sh"
+  bash "$ROOT/scripts/test-native-watch-receiver.sh"
+  bash "$ROOT/scripts/test-native-complication-timeline.sh"
   bash "$ROOT/scripts/test-native-weather-forecast.sh"
   bash "$ROOT/scripts/test-native-weather-preview.sh"
   bash "$ROOT/scripts/test-native-weather-outlook.sh"
+  bash "$ROOT/scripts/test-native-day-rhythm.sh"
+  bash "$ROOT/scripts/test-native-day-rhythm-view-contract.sh"
   bash "$ROOT/scripts/test-native-weather-essentials.sh"
   bash "$ROOT/scripts/test-native-essentials-model.sh"
   bash "$ROOT/scripts/test-native-sun-daylight.sh"
@@ -133,10 +144,23 @@ run_native_model_checks() {
   bash "$ROOT/scripts/test-native-hrrr-subhourly.sh"
   bash "$ROOT/scripts/test-native-radar-freshness.sh"
   bash "$ROOT/scripts/test-native-radar-cache.sh"
+  bash "$ROOT/scripts/test-native-radar-visible-coverage.sh"
+  bash "$ROOT/scripts/test-native-radar-model-pipeline.sh"
+  bash "$ROOT/scripts/test-native-radar-playback.sh"
+  bash "$ROOT/scripts/test-native-radar-observed-repository.sh"
+  bash "$ROOT/scripts/test-native-radar-preview-handoff.sh"
+  bash "$ROOT/scripts/test-native-radar-preview.sh"
+  bash "$ROOT/scripts/test-native-radar-preview-lifecycle.sh"
+  bash "$ROOT/scripts/test-native-radar-preview-snapshot.sh"
+  bash "$ROOT/scripts/test-native-radar-preview-card.sh"
   bash "$ROOT/scripts/test-native-basemap-client.sh"
+  bash "$ROOT/scripts/test-native-basemap-tile-cache.sh"
   bash "$ROOT/scripts/test-native-global-radar.sh"
   bash "$ROOT/scripts/test-native-satellite.sh"
   bash "$ROOT/scripts/test-native-radar-alerts.sh"
+  bash "$ROOT/scripts/test-native-radar-alert-focus.sh"
+  bash "$ROOT/scripts/test-native-radar-no-storm-check.sh"
+  bash "$ROOT/scripts/test-native-radar-compact-controls.sh"
   bash "$ROOT/scripts/test-native-radar-seam.sh"
   bash "$ROOT/scripts/test-native-radar-transition.sh"
   bash "$ROOT/scripts/test-native-xweather.sh"
@@ -144,6 +168,45 @@ run_native_model_checks() {
   bash "$ROOT/scripts/test-native-places-controls.sh"
   bash "$ROOT/scripts/test-native-place-lookup.sh"
   bash "$ROOT/scripts/test-native-places-owner.sh"
+  # These protect the native-only Dev journey itself.  Keep them in the
+  # shared native gate rather than treating a successful model build as proof
+  # that a person cannot fall through into the compatibility host.
+  bash "$ROOT/scripts/test-native-nativeonly-host-boundary.sh"
+  bash "$ROOT/scripts/test-native-nativeonly-places-contract.sh"
+  bash "$ROOT/scripts/test-native-app-router.sh"
+  bash "$ROOT/scripts/test-native-deep-link-router.sh"
+  bash "$ROOT/scripts/test-native-notification-route.sh"
+  bash "$ROOT/scripts/test-native-nativeonly-routing-contract.sh"
+  bash "$ROOT/scripts/test-native-nativeonly-map-failure-contract.sh"
+  bash "$ROOT/scripts/test-native-agenda-repository.sh"
+  bash "$ROOT/scripts/test-native-plan-migration.sh"
+  # P0 keeps legacy as the only delivery owner, but it must prove the local
+  # receipt can wait for later native Plan/Places verification without losing
+  # selection or opt-out semantics.
+  bash "$ROOT/scripts/test-native-plan-notification-intent.sh"
+  # P1 preparation is intentionally a pure review model. It must continue to
+  # reject stale mappings without adding a second delivery owner.
+  bash "$ROOT/scripts/test-native-plan-delivery-transfer-draft.sh"
+  # The review coordinator is descriptor-read-only: a user opening a future
+  # transfer review must not create P0 state or cross Local/Production scope.
+  bash "$ROOT/scripts/test-native-plan-delivery-transfer-review-coordinator.sh"
+  bash "$ROOT/scripts/test-native-plan-handoff.sh"
+  bash "$ROOT/scripts/test-native-plan-evidence.sh"
+  bash "$ROOT/scripts/test-native-plans-and-ask.sh"
+  bash "$ROOT/scripts/test-native-ask-offline.sh"
+  bash "$ROOT/scripts/test-native-plan-notifications.sh"
+  bash "$ROOT/scripts/test-native-companion-content.sh"
+  bash "$ROOT/scripts/test-native-storm-check.sh"
+  bash "$ROOT/scripts/test-native-plan-route-focus.sh"
+  bash "$ROOT/scripts/test-native-ask-read.sh"
+  # Living Sky's scene choice and its motion clock are pure native contracts.
+  # Keep both deterministic suites in the shared native gate: a simulator
+  # build alone cannot prove that a weather refresh will keep the same scene
+  # or that decorative motion obeys its pause/reset rules.
+  bash "$ROOT/scripts/test-native-living-sky.sh"
+  bash "$ROOT/scripts/test-native-living-sky-motion.sh"
+  bash "$ROOT/scripts/test-native-sky-stars.sh"
+  node "$ROOT/scripts/test-native-living-sky-lifecycle.mjs"
   bash "$ROOT/scripts/test-native-snapshot-publication.sh"
   printf 'PASS  Native shared-model checks\n'
 }

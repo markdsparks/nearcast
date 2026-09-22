@@ -70,12 +70,22 @@ struct NativePreviewHandoff: Encodable, Sendable {
     let destination: NativeLegacyDestination
     let place: NativePreviewPlace
     let targetDate: String?
+    /// An optional legacy-owned plan identity. Native Agenda can safely use
+    /// this to ask the compatibility host for the *same* saved plan without
+    /// trying to own its editor, watch choices, or notification policy yet.
+    let planID: String?
     /// Optional draft created in a native entry surface. It is deliberately
     /// bounded and only delivered to the already-verified Ask destination.
     let initialQuery: String?
 
-    init(destination: NativeLegacyDestination, place: NativePreviewPlace, date: Date?, timezone: String?, initialQuery: String? = nil) {
+    init(destination: NativeLegacyDestination, place: NativePreviewPlace, date: Date?, timezone: String?,
+         planID: String? = nil, initialQuery: String? = nil) {
         self.destination = destination
+        let trimmedPlanID = planID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.planID = (trimmedPlanID?.isEmpty == false && trimmedPlanID!.count <= 160 &&
+            !trimmedPlanID!.unicodeScalars.contains(where: { $0.value < 32 || (127...159).contains($0.value) }))
+            ? trimmedPlanID
+            : nil
         self.place = place
         let trimmedQuery = initialQuery?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.initialQuery = (trimmedQuery?.isEmpty == false) ? String(trimmedQuery!.prefix(500)) : nil
@@ -90,6 +100,32 @@ struct NativePreviewHandoff: Encodable, Sendable {
             targetDate = nil
         }
     }
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case destination
+        case place
+        case targetDate
+        case planID = "planId"
+        case initialQuery
+    }
+}
+
+/// An explicit, one-way escape from the native-only Dev host to the retained
+/// compatibility experience. Keeping this typed prevents a native route from
+/// being silently flattened into generic web Home while parts of the product
+/// are still moving over.
+enum NativeCompatibilityLaunch {
+    /// The user intentionally opened the existing app with no contextual task.
+    case home
+    /// Continue a native-originated Ask, Plans, Map, or details request at the
+    /// exact verified place and optional date/query.
+    case handoff(NativePreviewHandoff)
+    /// Preserve a system notification payload for the existing notification
+    /// router until native Plans/watch routing is fully owned.
+    case notification([AnyHashable: Any])
+    /// Preserve an external Nearcast URL that the native root does not own yet.
+    case deepLink(URL)
 }
 
 enum NativePreviewError: LocalizedError {

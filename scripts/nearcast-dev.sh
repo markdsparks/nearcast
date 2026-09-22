@@ -9,7 +9,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="$ROOT/native/ios/Nearcast.xcodeproj"
 DERIVED_DATA="$ROOT/native/ios/DerivedData/dev"
 
-PHONE_SCHEME="Nearcast Dev"
+# Realistic device performance is the default. Debug remains available for
+# source-level stepping without changing any Dev identity or service setting.
+DEV_CONFIGURATION="${NEARCAST_DEV_CONFIGURATION:-DevPerformance}"
+case "$DEV_CONFIGURATION" in
+  DevPerformance) PHONE_SCHEME="Nearcast Dev Performance" ;;
+  Debug) PHONE_SCHEME="Nearcast Dev" ;;
+  *) printf 'Unsupported Dev configuration: %s\n' "$DEV_CONFIGURATION" >&2; exit 2 ;;
+esac
 WATCH_SCHEME="Nearcast Dev Watch"
 PHONE_BUNDLE_ID="app.nearcast.ios.dev"
 WATCH_BUNDLE_ID="app.nearcast.ios.dev.watch"
@@ -18,8 +25,8 @@ WATCH_BUNDLE_ID="app.nearcast.ios.dev.watch"
 DEFAULT_PHONE_ID="00008150-001E705802F0401C"
 DEFAULT_WATCH_ID="00008310-000378683A7BA01E"
 
-PHONE_APP="$DERIVED_DATA/Build/Products/Debug-iphoneos/Nearcast.app"
-WATCH_APP="$DERIVED_DATA/Build/Products/Debug-watchos/NearcastWatch.app"
+PHONE_APP="$DERIVED_DATA/Build/Products/$DEV_CONFIGURATION-iphoneos/Nearcast.app"
+WATCH_APP="$DERIVED_DATA/Build/Products/$DEV_CONFIGURATION-watchos/NearcastWatch.app"
 SCHEME_LIST=""
 
 green='\033[0;32m'
@@ -134,7 +141,7 @@ build_phone() {
   xcodebuild \
     -project "$PROJECT" \
     -scheme "$PHONE_SCHEME" \
-    -configuration Debug \
+    -configuration "$DEV_CONFIGURATION" \
     -destination "platform=iOS,id=$device_id" \
     -derivedDataPath "$DERIVED_DATA" \
     -allowProvisioningUpdates \
@@ -157,7 +164,7 @@ build_watch() {
   xcodebuild \
     -project "$PROJECT" \
     -scheme "$WATCH_SCHEME" \
-    -configuration Debug \
+    -configuration "$DEV_CONFIGURATION" \
     -destination "platform=watchOS,id=$device_id" \
     -derivedDataPath "$DERIVED_DATA" \
     -allowProvisioningUpdates \
@@ -190,8 +197,9 @@ Defaults:
   iPhone 17 Pro Max: 00008150-001E705802F0401C
   Apple Watch Ultra 2: 00008310-000378683A7BA01E
 
-This is a direct-device development lane. It uses the Debug configuration and
+This is a direct-device development lane. It uses optimized DevPerformance and
 automatic signing; it never uploads a build or replaces the TestFlight app.
+For unoptimized source-level debugging, set NEARCAST_DEV_CONFIGURATION=Debug.
 For a fresh Watch install, run `all` first so its Nearcast Dev iPhone
 companion is already installed.
 EOF

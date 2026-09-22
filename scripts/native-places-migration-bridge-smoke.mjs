@@ -173,7 +173,11 @@ assert.deepEqual(unsupportedPreview.reads, []);
 // WebKit, filesystem, permission, or physical-device integration tests.
 const receive = section(bridge, "func userContentController(", "\n    static func bootstrapScript");
 assert.match(receive, /let type = payload\["type"\][\s\S]*type == "preview\.open"[\s\S]*recordBridgeMessage\(\["type": type\]\)/);
-assert.match(receive, /type == "widget\.snapshot" \|\| type\.hasPrefix\("placesOwner\."\)/);
+// Every bridge payload that can carry a saved-plan/place receipt must be
+// reduced to its event type before diagnostics see it.  Keep this list
+// explicit: a later export must not silently fall back to recording the
+// whole message body just because the redaction assertion is too narrow.
+assert.match(receive, /type == "widget\.snapshot" \|\| type == "agenda\.snapshot" \|\|[\s\S]*type == "plans\.handover\.snapshot" \|\| type\.hasPrefix\("placesOwner\."\)/);
 const redactedBranch = receive.slice(receive.indexOf('== "preview.open"'), receive.indexOf("} else {"));
 assert.doesNotMatch(redactedBranch, /recordBridgeMessage\((?:message\.body|payload)\)/, "preview context and migration are redacted before handling");
 const handler = section(bridge, 'if type == "preview.open" {', '\n        if type.hasPrefix("ai.")');

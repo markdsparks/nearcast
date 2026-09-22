@@ -40,12 +40,22 @@ enum NearcastForecastSemantics {
         rawCode: Int?,
         precipitationAmount: Double?,
         intervalSeconds: Double?,
-        cloudCover: Double?
+        cloudCover: Double?,
+        modeledPrecipitationChance: Double? = nil
     ) -> Int? {
         let rate = precipitationRate(
             amount: precipitationAmount ?? 0,
             intervalSeconds: intervalSeconds ?? 3_600
         )
+        // A deterministic current model can paint a small shower while its
+        // matching probability guidance says it is unlikely. That is a
+        // disagreement between forecasts, not an observation of falling rain.
+        // Callers supply this only for modeled-current data; an observed rain
+        // signal must never be vetoed by a forecast probability.
+        if let chance = modeledPrecipitationChance, chance.isFinite,
+           (0...100).contains(chance), chance < hourlySupportedChance {
+            return nonPrecipitationCode(rawCode, cloudCover: cloudCover)
+        }
         if let measured = measuredPrecipitationCode(rate: rate, baseCode: rawCode) {
             return strongerPrecipitationCode(rawCode, measured)
         }

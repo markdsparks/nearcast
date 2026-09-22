@@ -12,17 +12,26 @@ final class NativeSnapshotPublicationCoordinator {
 
     typealias ReadPublication = @MainActor () -> NearcastWidgetSnapshotStore.Publication?
     typealias WritePublication = @MainActor (NearcastWidgetSnapshot, NearcastWidgetPlace?) -> Bool
+    /// Re-delivery is deliberately separate from persistence. A newly
+    /// installed Watch can need the already-committed phone receipt even when
+    /// the forecast itself has not changed since the app last ran.
+    typealias ReplayPublication = @MainActor (NearcastWidgetSnapshotStore.Publication) -> Bool
 
     private let readPublication: ReadPublication
     private let writePublication: WritePublication
+    private let replayPublication: ReplayPublication
     private var source: NativePlacesSource?
     private var revision: Int?
+    private var lastReplaySignature: String?
+    private var nativeContentAuthoritative = false
 
     init(readPublication: @escaping ReadPublication = {
         NearcastWidgetSnapshotStore.storedPublication()
-    }, writePublication: @escaping WritePublication = NativeSnapshotPublicationCoordinator.writeToCompanions) {
+    }, writePublication: @escaping WritePublication = NativeSnapshotPublicationCoordinator.writeToCompanions,
+       replayPublication: @escaping ReplayPublication = NativeSnapshotPublicationCoordinator.replayToCompanions) {
         self.readPublication = readPublication
         self.writePublication = writePublication
+        self.replayPublication = replayPublication
         // A cold host must reject old legacy publications even before its
         // authoritative owner store finishes loading.
         self.revision = readPublication()?.snapshot.ownerRevision
@@ -56,11 +65,16 @@ final class NativeSnapshotPublicationCoordinator {
         let matches = Self.matches(previous?.place, selected)
         let compatible = matches && previous?.snapshot.windUnit == unit
 
-        // Reopening the same owner does not create false freshness, discard
-        // extension weather, or generate redundant Watch transfers.
+        // Reopening the same owner does not create false freshness or discard
+        // extension weather. It *does* replay the already-committed receipt
+        // once for this process: a Watch app or widget can have been installed
+        // after the phone last wrote its snapshot, and no new forecast is
+        // required for that companion to catch up.
         if previous?.snapshot.ownerRevision == revision, compatible,
            previous?.snapshot.uses24HourClock == clock,
-           previous?.snapshot.placeName == (selected?.displayName ?? "Nearcast") {
+           previous?.snapshot.placeName == (selected?.displayName ?? "Nearcast"),
+           let previous {
+            replayCurrentPublication(previous)
             return true
         }
 
@@ -118,11 +132,15 @@ final class NativeSnapshotPublicationCoordinator {
         let owner = existing?.snapshot ?? .fallback
         // SwiftUI can deliver both the forecast-change observation and the
         // enclosing refresh task. One forecast receipt should produce one
-        // companion generation, not two Watch transfers.
+        // companion generation, not two *writes*. A cold phone process still
+        // replays the receipt once so a newly installed/reconnected Watch is
+        // not left behind until weather changes again.
         if owner.ownerRevision == revision,
            owner.weatherSavedAt == forecast.generatedAt.timeIntervalSince1970,
            owner.nativeWeatherInvalidation == false,
-           Self.matches(existing?.place, selected) {
+           Self.matches(existing?.place, selected),
+           let existing {
+            replayCurrentPublication(existing)
             return true
         }
         var snapshot = owner.mergingWeather(from: Self.weatherSnapshot(
@@ -145,6 +163,7 @@ final class NativeSnapshotPublicationCoordinator {
 
     @discardableResult
     func acceptLegacySnapshot(snapshot: NearcastWidgetSnapshot, place: NearcastWidgetPlace?, ownerRevision: Int? = nil) -> Bool {
+        guard !nativeContentAuthoritative else { return false }
         var accepted = snapshot
         var acceptedPlace = place
         if let revision {
@@ -165,6 +184,34 @@ final class NativeSnapshotPublicationCoordinator {
         return publish(accepted, place: acceptedPlace)
     }
 
+    /// Native plan edits and alert completions are independent of forecast
+    /// refreshes. Never skip them just because weather's generation is equal.
+    /// `nil` items means the native library could not be verified, not empty.
+    @discardableResult
+    func publishNativeContent(items: [NativeAgendaItem]?, forecast: NativeWeatherForecast?,
+                              previewPlace: NativePreviewPlace, essentials: NativeWeatherEssentials?,
+                              source: NativePlacesSource, revision: Int, now: Date = Date()) -> Bool {
+        guard let selected = source.selectedPlace, Self.matches(selected, previewPlace),
+              forecast.map({ $0.metric == (source.preferences.unit == "celsius") }) ?? true,
+              publishNative(source: source, revision: revision),
+              let existing = readPublication(), existing.snapshot.ownerRevision == revision,
+              Self.matches(existing.place, selected) else { return false }
+        nativeContentAuthoritative = true
+        let next = NativeCompanionContent.applying(to: existing.snapshot, items: items,
+            forecast: forecast, previewPlace: previewPlace, essentials: essentials, now: now)
+        // Avoid manufacturing freshness/generations during observation churn;
+        // the content's own timestamps remain the source timestamps.
+        if let oldData = try? JSONEncoder().encode(existing.snapshot),
+           let newData = try? JSONEncoder().encode(next),
+           let oldObject = try? JSONSerialization.jsonObject(with: oldData) as? NSDictionary,
+           let newObject = try? JSONSerialization.jsonObject(with: newData) as? NSDictionary,
+           oldObject == newObject {
+            replayCurrentPublication(existing)
+            return true
+        }
+        return publish(next, place: Self.widgetPlace(selected))
+    }
+
     private func publish(_ snapshot: NearcastWidgetSnapshot, place: NearcastWidgetPlace?) -> Bool {
         let previousGeneration = readPublication()?.snapshot.publicationGeneration ?? 0
         guard previousGeneration >= 0, previousGeneration < Int.max else { return false }
@@ -173,7 +220,39 @@ final class NativeSnapshotPublicationCoordinator {
         next.publicationGeneration = previousGeneration + 1
         nextPlace?.ownerRevision = next.ownerRevision
         nextPlace?.publicationGeneration = next.publicationGeneration
-        return writePublication(next, nextPlace)
+        guard writePublication(next, nextPlace) else { return false }
+        // A successful normal publication already delivers to WidgetKit and
+        // WatchConnectivity. Remember it here so the very next duplicate
+        // SwiftUI observation cannot turn into a redundant re-delivery.
+        lastReplaySignature = Self.replaySignature(snapshot: next, place: nextPlace)
+        return true
+    }
+
+    /// Sends the durable, already-validated publication to system companions
+    /// without changing ownership, weather freshness, or generation. Keep
+    /// this bounded to one replay per publication state during a phone process
+    /// so SwiftUI observation churn cannot turn into WidgetKit reload churn.
+    private func replayCurrentPublication(_ publication: NearcastWidgetSnapshotStore.Publication) {
+        guard publication.isCoherent else { return }
+        let signature = Self.replaySignature(for: publication)
+        guard signature != lastReplaySignature else { return }
+        guard replayPublication(publication) else { return }
+        lastReplaySignature = signature
+    }
+
+    private static func replaySignature(for publication: NearcastWidgetSnapshotStore.Publication) -> String {
+        replaySignature(snapshot: publication.snapshot, place: publication.place)
+    }
+
+    private static func replaySignature(snapshot: NearcastWidgetSnapshot, place: NearcastWidgetPlace?) -> String {
+        return [
+            String(snapshot.ownerRevision ?? 0),
+            String(snapshot.publicationGeneration ?? 0),
+            String(snapshot.weatherSavedAt ?? 0),
+            snapshot.nativeWeatherInvalidation == true ? "invalid" : "valid",
+            place?.id ?? "",
+            place.map { String(format: "%.5f,%.5f", $0.latitude, $0.longitude) } ?? ""
+        ].joined(separator: "|")
     }
 
     private static func matches(_ place: NearcastWidgetPlace?, _ selected: NativeManagedPlace?) -> Bool {
@@ -205,6 +284,8 @@ final class NativeSnapshotPublicationCoordinator {
         snapshot.version = 9
         snapshot.savedAt = now.timeIntervalSince1970
         snapshot.weatherSavedAt = forecast.generatedAt.timeIntervalSince1970
+        snapshot.weatherLocation = NearcastCompanionLocation(latitude: selected.latitude,
+            longitude: selected.longitude, resolvedAt: forecast.generatedAt.timeIntervalSince1970)
         snapshot.placeName = selected.displayName
         snapshot.placeTimezone = displayTimezone
         snapshot.uses24HourClock = uses24HourClock
@@ -318,8 +399,17 @@ final class NativeSnapshotPublicationCoordinator {
 
     private static func writeToCompanions(_ snapshot: NearcastWidgetSnapshot, _ place: NearcastWidgetPlace?) -> Bool {
         guard NearcastWidgetSnapshotStore.savePublication(snapshot, place: place),
-              let committed = NearcastWidgetSnapshotStore.storedPublication(),
-              let data = try? JSONEncoder().encode(committed.snapshot) else { return false }
+              let committed = NearcastWidgetSnapshotStore.storedPublication() else { return false }
+        return replayToCompanions(committed)
+    }
+
+    /// A delivery replay is intentionally non-mutating. It lets WidgetKit and
+    /// WatchConnectivity receive a committed state after an app restart,
+    /// companion install, or delayed activation without manufacturing a newer
+    /// weather timestamp or owner generation.
+    private static func replayToCompanions(_ publication: NearcastWidgetSnapshotStore.Publication) -> Bool {
+        guard publication.isCoherent,
+              let data = try? JSONEncoder().encode(publication.snapshot) else { return false }
         #if canImport(UIKit) && canImport(WidgetKit)
         WidgetCenter.shared.reloadTimelines(ofKind: NearcastWidgetSnapshotStore.widgetKind)
         // A prior timeline can remain alive while WidgetKit coalesces a
@@ -327,7 +417,7 @@ final class NativeSnapshotPublicationCoordinator {
         // the app's companion timelines makes the newly committed shared
         // receipt visible without relying on the next discretionary refresh.
         WidgetCenter.shared.reloadAllTimelines()
-        NativeWatchSnapshotSync.shared.sendSnapshotData(data, placeData: committed.place.flatMap { try? JSONEncoder().encode($0) })
+        NativeWatchSnapshotSync.shared.sendSnapshotData(data, placeData: publication.place.flatMap { try? JSONEncoder().encode($0) })
         #endif
         return true
     }

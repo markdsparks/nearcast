@@ -16,8 +16,11 @@ const wasmBytes = await readFile(new URL("../vendor/operon/operon_core_bg.wasm",
 const plannerSource = await readFile(new URL("../planner.js", import.meta.url), "utf8");
 const nativeOperonSource = await readFile(new URL("../native/ios/NearcastApp/Bridge/NativeOperonController.swift", import.meta.url), "utf8");
 const nativeBridgeSource = await readFile(new URL("../native/ios/NearcastApp/Bridge/NativeBridge.swift", import.meta.url), "utf8");
-const packageResolution = JSON.parse(await readFile(new URL("../native/ios/Nearcast.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved", import.meta.url), "utf8"));
-assert.equal(packageResolution.pins.find((pin) => pin.identity === "operon")?.state?.version, "0.4.0");
+// Validate the checked-in dependency requirement, not Xcode's generated
+// workspace resolution (which may be absent with local package overrides).
+const nativeProject = await readFile(new URL("../native/ios/Nearcast.xcodeproj/project.pbxproj", import.meta.url), "utf8");
+assert.match(nativeProject, /repositoryURL = "https:\/\/github\.com\/markdsparks\/operon\.git";\s*requirement = \{\s*kind = exactVersion;\s*version = 0\.4\.0;/,
+  "native Operon must be pinned to the validated 0.4.0 API");
 assert.match(nativeOperonSource, /for try await event in driver\.stream/);
 assert.match(nativeOperonSource, /case \.finished\(let completion\)[\s\S]*terminalJSON = completion\.json/);
 assert.match(nativeOperonSource, /case \.measurement\(let sample\)/);

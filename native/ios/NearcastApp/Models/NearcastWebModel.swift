@@ -16,12 +16,18 @@ final class NearcastWebModel: ObservableObject {
     @Published var showingNativePreview = false
     @Published private(set) var nativePreviewContext = NativePreviewContextStore.load()
     @Published var nativePreviewError: String?
+    @Published private(set) var isOpeningAssistant = false
+    private var failedPreviewHandoff: NativePreviewHandoff?
     @Published private(set) var placesMigrationReport: NativePlacesMigrationReport?
     @Published private(set) var placesMigrationMessage = "Not checked. The existing app still owns places and settings."
     @Published private(set) var isCheckingPlacesMigration = false
     let placesOwner: NativePlacesOwnerController
 
     private weak var webView: WKWebView?
+    /// An explicit native-only escape can arrive before the retained page has
+    /// mounted. Hold only the validated handoff until the trusted page reports
+    /// ready; never flatten it into generic web Home.
+    private var pendingNativePreviewHandoff: NativePreviewHandoff?
     private var localURL: URL
     private var loadTimeoutTask: Task<Void, Never>?
     private var placesMigrationTask: Task<Void, Never>?
@@ -35,8 +41,35 @@ final class NearcastWebModel: ObservableObject {
     private let developmentMigrationStore = NativePlacesMigrationStore(
         directory: NativePlacesMigrationStore.defaultDirectory.appendingPathComponent("DevelopmentOnly", isDirectory: true)
     )
+    // This observer coordinates only a local, legacy-owned receipt. It is
+    // lazy so ordinary compatibility browsing does not create a Plans handoff
+    // store until a trusted Plans export actually arrives.
+    private var planNotificationIntentCoordinator: NativePlanNotificationIntentHandoffCoordinator?
+    // Legacy planner code may publish on ordinary settings changes. Native
+    // consumes exactly one export only after the user confirmed an exact
+    // native-to-existing Plans bridge.
+    private var planHandoverCompatibilityConsent = false
+    private var planHandoverExportArmed = false
+    /// The consent is tied to the exact compatibility document that will
+    /// receive the handoff. A queued first load may consume one navigation;
+    /// any later navigation, mode change, or timeout invalidates the grant.
+    private var planHandoverConsentRevision: Int?
+    private var planHandoverArmRevision: Int?
+    private var planHandoverExportArmTask: Task<Void, Never>?
 
-    init() {
+    /// The browser-backed model is unavailable during an ordinary native-only
+    /// Dev session.  The one retained compatibility cover is created only
+    /// after a person has confirmed a bounded migration/recovery action, and
+    /// passes this capability explicitly.  Keeping the check at construction
+    /// time means a future view refactor cannot quietly recreate WebKit below
+    /// the native root.
+    init(allowNativeOnlyCompatibility: Bool = false) {
+        #if DEBUG
+        precondition(
+            !NativeRuntimeConfiguration.isNativeOnlyExperience || allowNativeOnlyCompatibility,
+            "NearcastWebModel requires an explicit native-only compatibility handoff."
+        )
+        #endif
         let storedMode = NativeRuntimeConfiguration.storedMode()
         let storedLocalURL = NativeRuntimeConfiguration.storedLocalURL()
         mode = storedMode
@@ -44,6 +77,9 @@ final class NearcastWebModel: ObservableObject {
         localURLText = storedLocalURL.absoluteString
         currentURL = storedMode == .local ? storedLocalURL : NativeRuntimeConfiguration.productionURL
         placesOwner = NativePlacesOwnerController(production: storedMode == .production)
+        NativeAgendaStore.shared.configure(
+            sourceScope: NativeLegacySourceScope(production: storedMode == .production)
+        )
         placesOwner.onChange = { [weak self] in self?.placesOwnerDidChange() }
         placesOwnerDidChange()
         NativeNotificationRouter.shared.attach(self)
@@ -52,14 +88,21 @@ final class NearcastWebModel: ObservableObject {
     func attach(_ webView: WKWebView) {
         self.webView = webView
         installOwnerScripts(in: webView)
+        deliverPendingNativePreviewHandoffIfReady()
     }
 
     func load(_ nextMode: NearcastWebMode) {
         ownerDocumentID = nil
+        clearPlanHandoverExportArm(clearConsent: true)
         mode = nextMode
         NativeRuntimeConfiguration.storeMode(nextMode)
-        requestNavigation(to: nextMode == .local ? localURL : NativeRuntimeConfiguration.productionURL, force: true)
+        let scope = NativeLegacySourceScope(production: nextMode == .production)
+        // Reconfigure all retained source readers before a new host can emit
+        // an Agenda or P0 handover export.
+        NativeAgendaStore.shared.configure(sourceScope: scope)
         placesOwner.configure(production: nextMode == .production)
+        planNotificationIntentCoordinator?.configure(production: nextMode == .production)
+        requestNavigation(to: nextMode == .local ? localURL : NativeRuntimeConfiguration.productionURL, force: true)
     }
 
     func saveLocalURL() {
@@ -108,6 +151,27 @@ final class NearcastWebModel: ObservableObject {
         hasLoadedPage = true
         // A slow successful navigation must dismiss an earlier timeout banner.
         lastError = nil
+        installAgendaCompatibilityExport()
+        deliverPendingNativePreviewHandoffIfReady()
+    }
+
+    private func installAgendaCompatibilityExport() {
+        guard let webView,
+              let url = Bundle.main.url(forResource: "NativeAgendaExport", withExtension: "js"),
+              let script = try? String(contentsOf: url, encoding: .utf8) else { return }
+        webView.callAsyncJavaScript("""
+            const deadline = Date.now() + 15000;
+            while (typeof savePlanMemories !== 'function' || typeof normalizePlanMemory !== 'function') {
+                if (Date.now() >= deadline) return false;
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            if (typeof publishLegacyAgendaSnapshot === 'function') {
+                publishLegacyAgendaSnapshot();
+            } else {
+                \(script)
+            }
+            return true;
+            """, arguments: [:], in: nil, in: .page) { _ in }
     }
 
     func setError(_ error: Error?) {
@@ -140,6 +204,34 @@ final class NearcastWebModel: ObservableObject {
         }
     }
 
+    /// Ingests only the strict, trusted legacy Agenda projection. A rejected
+    /// export leaves the last verified cache intact; Plans and watch choices
+    /// remain legacy-owned until their native replacements are complete.
+    func receiveLegacyAgendaExport(_ data: Data) {
+        _ = NativeAgendaStore.shared.acceptLegacyExport(
+            data,
+            sourceScope: NativeLegacySourceScope(production: mode == .production)
+        )
+    }
+
+    /// Stages only a complete, allowlisted legacy Plan/export receipt. This
+    /// method intentionally has no result surface: a rejected rehearsal must
+    /// not cause a retry, an empty plan view, or any notification action.
+    func receiveLegacyPlanHandoverExport(_ data: Data) {
+        guard planHandoverExportArmed,
+              planHandoverArmRevision == navigationRevision else { return }
+        // Consume before decoding so a legacy settings mutation cannot replay
+        // another export after the one explicit compatibility request.
+        clearPlanHandoverExportArm(clearConsent: true)
+        if planNotificationIntentCoordinator == nil {
+            planNotificationIntentCoordinator = NativePlanNotificationIntentHandoffCoordinator(
+                production: mode == .production,
+                placesOwner: placesOwner
+            )
+        }
+        planNotificationIntentCoordinator?.receiveVerifiedLegacyHandover(data)
+    }
+
     func openNotification(userInfo: [AnyHashable: Any]) {
         showingNativePreview = false
         requestNavigation(to: notificationTargetURL(userInfo: userInfo, baseURL: currentBaseURL), force: true)
@@ -152,6 +244,38 @@ final class NearcastWebModel: ObservableObject {
         }
         showingNativePreview = false
         requestNavigation(to: deepLinkTargetURL(url, baseURL: currentBaseURL), force: shouldForceDeepLinkNavigation(url))
+    }
+
+    /// Continues a user-approved native-only escape after the compatibility
+    /// host exists. It is deliberately not called during ordinary launch:
+    /// native-only Dev must never construct this model or WebKit by accident.
+    func openCompatibilityLaunch(_ launch: NativeCompatibilityLaunch) {
+        // A fresh explicit request never inherits a one-shot arm from a prior
+        // Plan attempt, even if that prior page is still visible.
+        if planHandoverExportArmed {
+            clearPlanHandoverExportArm(clearConsent: true)
+        }
+        if case .handoff(let handoff) = launch, handoff.destination == .plans {
+            planHandoverCompatibilityConsent = true
+            // If the compatibility page is already live, the request belongs
+            // to that document. Otherwise permit exactly the initial queued
+            // navigation that will load it.
+            planHandoverConsentRevision = hasLoadedPage && !isLoading
+                ? navigationRevision
+                : navigationRevision + 1
+        } else {
+            clearPlanHandoverExportArm(clearConsent: true)
+        }
+        switch launch {
+        case .home:
+            showingNativePreview = false
+        case .handoff(let handoff):
+            queueNativePreviewHandoff(handoff)
+        case .notification(let userInfo):
+            openNotification(userInfo: userInfo)
+        case .deepLink(let url):
+            openDeepLink(url)
+        }
     }
 
     func openNativePreview(data: Data, migrationData: Data? = nil) {
@@ -517,30 +641,107 @@ final class NearcastWebModel: ObservableObject {
     /// owns subsequent place changes/publication and any requested mutations.
     func handoffNativePreview(_ handoff: NativePreviewHandoff) {
         showingNativePreview = false
+        failedPreviewHandoff = handoff
         guard hasLoadedPage, let webView,
               let data = try? JSONEncoder().encode(handoff),
               let payload = try? JSONSerialization.jsonObject(with: data) else {
             nativePreviewError = "The existing app is not ready. Return to Nearcast and let it finish loading before opening this view."
             return
         }
+        let requestsPlanHandover = handoff.destination == .plans &&
+            planHandoverCompatibilityConsent &&
+            planHandoverConsentRevision == navigationRevision &&
+            !planHandoverExportArmed
+        if requestsPlanHandover {
+            // The bridge consumes this single arm. The JavaScript completion
+            // is not the acknowledgement: postMessage arrives separately.
+            armPlanHandoverExport()
+        }
+        isOpeningAssistant = handoff.destination == .ask
         webView.callAsyncJavaScript("""
+            // Page navigation can finish before Places hydration and the
+            // planner scripts. Wait for readiness before submitting once.
+            const deadline = Date.now() + 15000;
+            while (window.NearcastNativePreview?.version !== 1 ||
+                   (payload.destination === 'ask' && typeof runAsk !== 'function')) {
+                if (Date.now() >= deadline) throw new Error('The assistant is still loading. Please try again.');
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            if (typeof nativeOwnerWeatherLoad !== 'undefined' && nativeOwnerWeatherLoad) {
+                await nativeOwnerWeatherLoad;
+            }
+            if (payload.destination === 'ask' &&
+                ((typeof askStreaming !== 'undefined' && askStreaming) ||
+                 (typeof aiState !== 'undefined' && aiState.phase === 'generating'))) {
+                throw new Error('Wait for the current answer to finish, then try again.');
+            }
             if (window.NearcastNativePreview?.version !== 1) {
                 throw new Error('Reload Nearcast to enable this preview handoff.');
             }
-            return await window.NearcastNativePreview.handoff(payload);
-            """, arguments: ["payload": payload], in: nil, in: .page) { [weak self] result in
+            const response = await window.NearcastNativePreview.handoff(payload);
+            const safeResponse = response && typeof response === 'object' ? response : { ok: false };
+            const planHandoverPublished = requestPlanHandover && safeResponse.ok === true &&
+                typeof publishLegacyPlanHandoverSnapshot === 'function'
+                ? publishLegacyPlanHandoverSnapshot() === true
+                : false;
+            return { ...safeResponse, nativePlanHandoverPublished: planHandoverPublished };
+            """, arguments: ["payload": payload, "requestPlanHandover": requestsPlanHandover], in: nil, in: .page) { [weak self] result in
+                self?.isOpeningAssistant = false
                 switch result {
                 case .success(let value):
                     let response = value as? [String: Any]
+                    // `publishLegacyPlanHandoverSnapshot()` posts through
+                    // WebKit asynchronously. Keep the exact arm alive until
+                    // `receiveLegacyPlanHandoverExport` consumes it. If this
+                    // request did not publish, there is nothing to accept.
+                    if requestsPlanHandover,
+                       response?["nativePlanHandoverPublished"] as? Bool != true {
+                        self?.clearPlanHandoverExportArm(clearConsent: true)
+                    }
                     if response?["reason"] as? String == "map-date-unavailable" {
                         self?.nativePreviewError = "The map forecast doesn't reach that day yet. Its timeline has a shorter range than the daily forecast."
                     } else if response?["ok"] as? Bool != true {
                         self?.nativePreviewError = "That view did not finish opening. Return to Nearcast and try again."
+                    } else {
+                        self?.failedPreviewHandoff = nil
                     }
                 case .failure:
+                    if requestsPlanHandover {
+                        self?.clearPlanHandoverExportArm(clearConsent: true)
+                    }
                     self?.nativePreviewError = "Could not open that exact place and view. Reload Nearcast and try again."
                 }
             }
+    }
+
+    var canRetryPreviewHandoff: Bool { failedPreviewHandoff != nil && !isOpeningAssistant }
+
+    func retryPreviewHandoff() {
+        guard let handoff = failedPreviewHandoff else { return }
+        nativePreviewError = nil
+        queueNativePreviewHandoff(handoff)
+    }
+
+    /// A compatibility root is allowed to wait for its trusted page. This is
+    /// distinct from a live preview handoff, where an unavailable page is a
+    /// user-visible error rather than an instruction to retry a mutation.
+    private func queueNativePreviewHandoff(_ handoff: NativePreviewHandoff) {
+        showingNativePreview = false
+        pendingNativePreviewHandoff = handoff
+        if hasLoadedPage, !isLoading, webView != nil {
+            deliverPendingNativePreviewHandoffIfReady()
+        } else {
+            requestNavigation(to: currentBaseURL, force: true)
+        }
+    }
+
+    private func deliverPendingNativePreviewHandoffIfReady() {
+        guard let handoff = pendingNativePreviewHandoff,
+              hasLoadedPage,
+              !isLoading,
+              webView != nil else { return }
+        pendingNativePreviewHandoff = nil
+        handoffNativePreview(handoff)
     }
 
     private var currentBaseURL: URL {
@@ -561,8 +762,51 @@ final class NearcastWebModel: ObservableObject {
             return
         }
 
+        // A live arm is document-bound. An initial compatibility navigation
+        // is the only navigation that may retain consent before an arm exists.
+        if planHandoverExportArmed ||
+            (planHandoverCompatibilityConsent &&
+             planHandoverConsentRevision != navigationRevision + 1) {
+            clearPlanHandoverExportArm(clearConsent: true)
+        }
+
         hasLoadedPage = false
         navigationRevision &+= 1
+    }
+
+    /// Arms exactly one trusted bridge message after an explicit Plans
+    /// compatibility action. PostMessage is asynchronous, so this stays
+    /// armed after JavaScript returns and is instead consumed by the native
+    /// bridge, invalidated by navigation/mode change, or expired shortly.
+    private func armPlanHandoverExport() {
+        planHandoverExportArmTask?.cancel()
+        let revision = navigationRevision
+        planHandoverExportArmed = true
+        planHandoverArmRevision = revision
+        planHandoverExportArmTask = Task { @MainActor [weak self] in
+            // The trusted page may spend up to 15 seconds waiting for its
+            // own hydration before it calls the publisher. Leave room for
+            // that bounded wait plus the asynchronous bridge delivery, while
+            // still making this a short-lived, document-bound capability.
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard !Task.isCancelled,
+                  let self,
+                  self.planHandoverExportArmed,
+                  self.planHandoverArmRevision == revision,
+                  self.navigationRevision == revision else { return }
+            self.clearPlanHandoverExportArm(clearConsent: true)
+        }
+    }
+
+    private func clearPlanHandoverExportArm(clearConsent: Bool) {
+        planHandoverExportArmTask?.cancel()
+        planHandoverExportArmTask = nil
+        planHandoverExportArmed = false
+        planHandoverArmRevision = nil
+        if clearConsent {
+            planHandoverCompatibilityConsent = false
+            planHandoverConsentRevision = nil
+        }
     }
 
     private func shouldForceDeepLinkNavigation(_ url: URL) -> Bool {

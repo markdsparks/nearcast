@@ -3,6 +3,9 @@ import Combine
 
 @MainActor
 final class NativeWeatherPreviewModel: ObservableObject {
+    enum HourlyScope { case next24Hours, day }
+    static let expiredForecastMessage = "This forecast is too old to show. Check your connection and try again."
+
     @Published private(set) var context: NativePreviewContext
     @Published private(set) var places: [NativePreviewPlace]
     @Published private(set) var selectedPlace: NativePreviewPlace
@@ -12,11 +15,17 @@ final class NativeWeatherPreviewModel: ObservableObject {
     @Published private(set) var essentials: NativeWeatherEssentials?
     @Published private(set) var isLoadingEssentials = false
     @Published var selectedDay: Date?
+    @Published private(set) var hourlyScope: HourlyScope = .next24Hours
     @Published var destination: NativeWeatherDestination = .today
     /// A compact outlook column can hand the user directly to the matching
     /// detailed hour. The view consumes this only as a scroll target; it never
     /// changes the forecast selection or fabricates a time reading.
     @Published private(set) var hourlyFocus: Date?
+    /// A chart or daypart can be selected again after the reader has moved.
+    /// `hourlyFocus` deliberately keeps the semantic target, while this
+    /// revision preserves the user’s repeat-selection intent for the
+    /// ScrollViewReader even when the target Date itself has not changed.
+    @Published private(set) var hourlyFocusRevision = 0
 
     private let repository: NativeForecastRepository
     private let essentialsRepository: NativeEssentialsRepository?
@@ -73,7 +82,9 @@ final class NativeWeatherPreviewModel: ObservableObject {
         errorMessage = nil
         if placeChanged {
             selectedDay = nil
+            hourlyScope = .next24Hours
             hourlyFocus = nil
+            hourlyFocusRevision += 1
             destination = .today
         }
         placeTask = Task { [weak self] in await self?.refresh() }
@@ -92,15 +103,34 @@ final class NativeWeatherPreviewModel: ObservableObject {
         essentials = nil
         errorMessage = nil
         selectedDay = nil
+        hourlyScope = .next24Hours
         hourlyFocus = nil
+        hourlyFocusRevision += 1
         destination = .today
         placeTask = Task { [weak self] in await self?.refresh() }
     }
 
-    func refresh() async {
+    /// A visible native Today or Hourly surface can outlive the disk-cache
+    /// lookup that first supplied it. Apply the very same retention boundary
+    /// before a retry or while the active view's clock advances.
+    @discardableResult
+    func expireForecastIfNeeded(now: Date) -> Bool {
+        guard let forecast, !NativeForecastRetentionPolicy.isUsable(forecast, now: now) else { return false }
+        self.forecast = nil
+        errorMessage = Self.expiredForecastMessage
+        return true
+    }
+
+    func hasUsableForecast(now: Date) -> Bool {
+        guard let forecast else { return false }
+        return NativeForecastRetentionPolicy.isUsable(forecast, now: now)
+    }
+
+    func refresh(now: Date = Date()) async {
         requestRevision += 1
         let revision = requestRevision
         let place = selectedPlace
+        _ = expireForecastIfNeeded(now: now)
         isLoading = true
         errorMessage = nil
         refreshEssentials()
@@ -112,10 +142,15 @@ final class NativeWeatherPreviewModel: ObservableObject {
             forecast = cached
         }
         do {
-            let loaded = try await repository.fetch(latitude: place.latitude, longitude: place.longitude, metric: context.metric, now: Date())
+            let loaded = try await repository.fetch(latitude: place.latitude, longitude: place.longitude, metric: context.metric, now: now)
             guard revision == requestRevision, !Task.isCancelled else { return }
             forecast = loaded
-            if let selectedDay, loaded.day(containing: selectedDay) == nil { self.selectedDay = nil }
+            if let selectedDay, loaded.day(containing: selectedDay) == nil {
+                self.selectedDay = nil
+                hourlyScope = .next24Hours
+                hourlyFocus = nil
+                hourlyFocusRevision += 1
+            }
         } catch is CancellationError {
             // Closing a preview or switching places isn't a weather failure.
         } catch {
@@ -157,14 +192,18 @@ final class NativeWeatherPreviewModel: ObservableObject {
 
     func showToday() {
         selectedDay = nil
+        hourlyScope = .next24Hours
         hourlyFocus = nil
+        hourlyFocusRevision += 1
         destination = .today
     }
 
     func showHourly(day: Date? = nil, focusedHour: Date? = nil) {
         if let day, forecast?.day(containing: day) == nil { return }
         selectedDay = day
+        hourlyScope = day == nil ? .next24Hours : .day
         hourlyFocus = focusedHour
+        hourlyFocusRevision += 1
         destination = .hourly
     }
 
@@ -172,6 +211,7 @@ final class NativeWeatherPreviewModel: ObservableObject {
         guard forecast?.day(containing: date) != nil else { return }
         selectedDay = date
         hourlyFocus = nil
+        hourlyFocusRevision += 1
         destination = .today
     }
 

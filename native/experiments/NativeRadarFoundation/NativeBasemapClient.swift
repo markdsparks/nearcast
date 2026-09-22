@@ -1,4 +1,340 @@
 import Foundation
+import CryptoKit
+
+/// End-user CARTO tile cache, separate from MapLibre's URL-keyed database.
+/// Only opaque SHA-256 names and validated PNG bytes are persisted: provider
+/// URLs/keys, cookies, response headers and configuration envelopes are not.
+/// Provider freshness is honored, capped at one day (well below thirty days).
+final class NativeBasemapTileCache: URLCache, @unchecked Sendable {
+    private struct Entry: Codable {
+        let expiry: Date
+        let stored: Date
+        let bytes: Data
+    }
+    private struct DiskEntry {
+        let bytes: Int
+        var expiry: Date
+        var previous: String?
+        var next: String?
+    }
+    struct CacheSnapshot {
+        let diskEntries: Int
+        let directoryScans: Int
+        let diskWritesEnabled: Bool
+    }
+    private let directory: URL?
+    private let clock: @Sendable () -> Date
+    private let lock = NSLock()
+    private let maximumBytes: Int
+    private var credentialFingerprint: String?
+    private var memory: [String: Entry] = [:]
+    private var recency: [String] = []
+    private let memoryLimit = 16 * 1024 * 1024
+    private var memoryBytes = 0
+    // A one-time metadata scan builds an opaque-key, bounded disk LRU. Tile
+    // reads only move links in memory; no filesystem timestamps are rewritten.
+    private var diskIndex: [String: DiskEntry] = [:]
+    private var diskOldest: String?, diskNewest: String?
+    private var diskBytes = 0
+    private var nextDiskExpiry: Date?
+    private var directoryScans = 0
+    private var diskWritesEnabled = true
+    private let maximumEntries: Int
+    private let maximumEncodedEntryBytes = 2 * 1024 * 1024
+
+    init(directory: URL?, maximumBytes: Int = 96 * 1024 * 1024,
+         maximumEntries: Int = 8192,
+         clock: @escaping @Sendable () -> Date = { Date() }) {
+        self.directory = directory
+        self.maximumBytes = min(96 * 1024 * 1024, max(0, maximumBytes))
+        self.maximumEntries = min(8192, max(0, maximumEntries))
+        self.clock = clock
+        // A nonzero advertised memory capacity keeps URLSession's cache lookup
+        // path enabled. Storage is implemented below; the stock disk store is
+        // still disabled so it cannot retain keyed URLs.
+        super.init(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 0, diskPath: nil)
+        if let directory {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var excluded = directory
+            var values = URLResourceValues(); values.isExcludedFromBackup = true
+            try? excluded.setResourceValues(values)
+            credentialFingerprint = try? String(contentsOf: directory.appendingPathComponent("credential.sha256"), encoding: .utf8)
+            indexDiskOnce()
+        }
+    }
+
+    private func identity(_ request: URLRequest) -> (tile: String, credential: String)? {
+        guard request.httpMethod == nil || request.httpMethod == "GET",
+              request.value(forHTTPHeaderField: "Cookie") == nil,
+              request.value(forHTTPHeaderField: "Authorization") == nil,
+              let url = request.url, NativeBasemapContract.isCartoResourceURL(url),
+              url.path.range(of: #"^/rastertiles/voyager_(nolabels|only_labels)/[0-9]+/[0-9]+/[0-9]+\.png$"#, options: .regularExpression) != nil,
+              let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              query.count == 1, query[0].name == "key", let key = query[0].value, !key.isEmpty else { return nil }
+        // CARTO's a/b/c/d hosts serve the same tile. Canonicalize that shard.
+        return (Self.digest("carto-v1|\(url.path)|\(key)"), Self.digest(key))
+    }
+
+    private static func digest(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Called only when a freshly validated configuration selects a credential.
+    /// Late responses for the old key may not erase the new key's working set.
+    func activateCredential(_ key: String) {
+        guard !key.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }; adoptCredential(Self.digest(key))
+    }
+
+    private func requestAllowsCache(_ request: URLRequest) -> Bool {
+        let control = (request.value(forHTTPHeaderField: "Cache-Control") ?? "").lowercased()
+        return !control.contains("no-cache") && !control.contains("no-store")
+            && !control.contains("max-age=0")
+            && request.value(forHTTPHeaderField: "Pragma")?.lowercased() != "no-cache"
+    }
+
+    private func adoptCredential(_ next: String) {
+        guard credentialFingerprint != next else { return }
+        clearEntries()
+        credentialFingerprint = next
+        if let directory { try? Data(next.utf8).write(to: directory.appendingPathComponent("credential.sha256"), options: .atomic) }
+    }
+
+    override func cachedResponse(for request: URLRequest) -> CachedURLResponse? {
+        guard let identity = identity(request), let url = request.url, requestAllowsCache(request),
+              request.cachePolicy != .reloadIgnoringLocalCacheData,
+              request.cachePolicy != .reloadIgnoringLocalAndRemoteCacheData else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        if credentialFingerprint == nil { adoptCredential(identity.credential) }
+        guard credentialFingerprint == identity.credential else { return nil }
+        let entry = memory[identity.tile] ?? readDiskEntry(identity.tile)
+        guard let entry, entry.bytes.count <= 1024 * 1024,
+              entry.bytes.starts(with: [137,80,78,71,13,10,26,10]),
+              entry.expiry > clock(), entry.stored <= clock(),
+              entry.expiry.timeIntervalSince(entry.stored) <= 86400 else {
+            if let removed = memory.removeValue(forKey: identity.tile) { memoryBytes -= removed.bytes.count }
+            recency.removeAll { $0 == identity.tile }
+            removeDisk(identity.tile)
+            return nil
+        }
+        remember(entry, key: identity.tile)
+        touchDisk(identity.tile)
+        guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "image/png", "Cache-Control": "max-age=\(max(0, Int(entry.expiry.timeIntervalSince(clock()))))"]) else { return nil }
+        return CachedURLResponse(response: response, data: entry.bytes, storagePolicy: .allowedInMemoryOnly)
+    }
+
+    override func storeCachedResponse(_ cachedResponse: CachedURLResponse, for request: URLRequest) {
+        guard let identity = identity(request), requestAllowsCache(request),
+              let response = cachedResponse.response as? HTTPURLResponse,
+              response.statusCode == 200, response.url == request.url,
+              response.value(forHTTPHeaderField: "Set-Cookie") == nil,
+              response.value(forHTTPHeaderField: "Vary") == nil,
+              cachedResponse.data.count <= 1024 * 1024,
+              cachedResponse.data.starts(with: [137,80,78,71,13,10,26,10]) else { return }
+        let control = (response.value(forHTTPHeaderField: "Cache-Control") ?? "").lowercased()
+        let directives = control.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !directives.contains(where: { $0 == "no-store" || $0 == "no-cache" || $0.hasPrefix("no-cache=") }),
+              let maxAge = directives.first(where: { $0.hasPrefix("max-age=") }).flatMap({ Double($0.dropFirst(8).replacingOccurrences(of: "\"", with: "")) }),
+              maxAge.isFinite, maxAge > 0 else { return }
+        let now = clock()
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        let apparentAge = response.value(forHTTPHeaderField: "Date").flatMap(formatter.date(from:))
+            .map { max(0, now.timeIntervalSince($0)) } ?? 0
+        guard let headerAge = Double(response.value(forHTTPHeaderField: "Age") ?? "0"),
+              headerAge.isFinite, headerAge >= 0 else { return }
+        let age = max(apparentAge, headerAge)
+        let lifetime = min(86400, maxAge - age)
+        guard lifetime.isFinite, lifetime > 0 else { return }
+        let entry = Entry(expiry: now.addingTimeInterval(lifetime), stored: now, bytes: cachedResponse.data)
+        let encoded = directory == nil ? nil : try? PropertyListEncoder().encode(entry)
+        lock.lock(); defer { lock.unlock() }
+        if credentialFingerprint == nil { adoptCredential(identity.credential) }
+        guard credentialFingerprint == identity.credential else { return }
+        remember(entry, key: identity.tile)
+        if diskWritesEnabled, let directory, let data = encoded, data.count <= maximumBytes,
+           data.count <= maximumEncodedEntryBytes, maximumEntries > 0 {
+            pruneExpiredDisk()
+            guard makeDiskRoom(for: data.count, replacing: identity.tile) else { return }
+            let file = directory.appendingPathComponent(identity.tile + ".tile")
+            do {
+            #if os(iOS)
+                try data.write(to: file, options: [.atomic, .completeFileProtectionUnlessOpen])
+            #else
+                try data.write(to: file, options: .atomic)
+            #endif
+                indexDisk(identity.tile, bytes: data.count, expiry: entry.expiry)
+            } catch {
+                // File protection, low storage or permissions can temporarily
+                // prevent persistence. Fail closed to memory for this session.
+                diskWritesEnabled = false
+            }
+        }
+    }
+
+    private func remember(_ entry: Entry, key: String) {
+        if let old = memory.removeValue(forKey: key) { memoryBytes -= old.bytes.count }
+        memory[key] = entry; memoryBytes += entry.bytes.count
+        recency.removeAll { $0 == key }; recency.append(key)
+        while memoryBytes > memoryLimit || memory.count > 2048, let oldest = recency.first {
+            recency.removeFirst()
+            if let old = memory.removeValue(forKey: oldest) { memoryBytes -= old.bytes.count }
+        }
+    }
+
+    /// Initial order uses file modification time only. Reopening never reads
+    /// every PNG payload; the embedded, potentially shorter HTTP expiry is
+    /// validated on its first disk lookup. One day is an upper bound only.
+    private func indexDiskOnce() {
+        guard let directory, let files = try? FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
+        directoryScans += 1
+        let now = clock()
+        var retained: [(String, Int, Date)] = []
+        for file in files where file.pathExtension == "tile" {
+            guard file.lastPathComponent.range(of: #"^[a-f0-9]{64}\.tile$"#, options: .regularExpression) != nil,
+                  let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let date = values.contentModificationDate, date <= now, now.timeIntervalSince(date) < 86400,
+                  let bytes = values.fileSize, bytes > 0, bytes <= maximumEncodedEntryBytes,
+                  bytes <= maximumBytes, maximumEntries > 0 else {
+                _ = deleteDiskFile(file); continue
+            }
+            retained.append((file.deletingPathExtension().lastPathComponent, bytes, date))
+        }
+        for entry in retained.sorted(by: { $0.2 < $1.2 }) {
+            guard makeDiskRoom(for: entry.1, replacing: entry.0) else { break }
+            indexDisk(entry.0, bytes: entry.1, expiry: entry.2.addingTimeInterval(86400))
+        }
+    }
+
+    private func readDiskEntry(_ key: String) -> Entry? {
+        guard let directory, let indexed = diskIndex[key] else { return nil }
+        guard indexed.expiry > clock() else { removeDisk(key); return nil }
+        let file = directory.appendingPathComponent(key + ".tile")
+        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0, size <= maximumEncodedEntryBytes,
+              let data = try? Data(contentsOf: file), data.count <= maximumEncodedEntryBytes,
+              let entry = try? PropertyListDecoder().decode(Entry.self, from: data) else {
+            removeDisk(key); return nil
+        }
+        // Refresh accounting if the OS or another cache instance replaced the
+        // file. Its embedded HTTP expiry, not mtime, controls the returned hit.
+        if data.count <= maximumBytes {
+            if makeDiskRoom(for: data.count, replacing: key) {
+                indexDisk(key, bytes: data.count, expiry: entry.expiry)
+            }
+        } else { removeDisk(key) }
+        return entry
+    }
+
+    private func indexDisk(_ key: String, bytes: Int, expiry: Date) {
+        removeDisk(key, deleteFile: false)
+        diskIndex[key] = DiskEntry(bytes: bytes, expiry: expiry, previous: diskNewest)
+        if let last = diskNewest { diskIndex[last]?.next = key } else { diskOldest = key }
+        diskNewest = key
+        diskBytes += bytes
+        nextDiskExpiry = min(nextDiskExpiry ?? expiry, expiry)
+    }
+
+    private func touchDisk(_ key: String) {
+        guard let entry = diskIndex[key], diskNewest != key else { return }
+        if let previous = entry.previous { diskIndex[previous]?.next = entry.next } else { diskOldest = entry.next }
+        if let next = entry.next { diskIndex[next]?.previous = entry.previous }
+        diskIndex[key]?.previous = diskNewest
+        diskIndex[key]?.next = nil
+        if let last = diskNewest { diskIndex[last]?.next = key }
+        diskNewest = key
+    }
+
+    private func makeDiskRoom(for bytes: Int, replacing key: String) -> Bool {
+        guard diskWritesEnabled else { return false }
+        let oldBytes = diskIndex[key]?.bytes ?? 0
+        let oldCount = diskIndex[key] == nil ? 0 : 1
+        while diskBytes - oldBytes > maximumBytes - bytes || diskIndex.count - oldCount >= maximumEntries {
+            guard let oldest = diskOldest else { return false }
+            let victim = oldest == key ? diskIndex[oldest]?.next : oldest
+            guard let victim, removeDisk(victim) else { return false }
+        }
+        return true
+    }
+
+    private func pruneExpiredDisk() {
+        let now = clock()
+        guard let nextDiskExpiry, nextDiskExpiry <= now else { return }
+        let expired = diskIndex.compactMap { $0.value.expiry <= now ? $0.key : nil }
+        for key in expired { if !removeDisk(key) { break } }
+        self.nextDiskExpiry = diskIndex.values.map(\.expiry).min()
+    }
+
+    @discardableResult private func removeDisk(_ key: String, deleteFile: Bool = true) -> Bool {
+        guard let entry = diskIndex[key] else { return true }
+        if deleteFile, let directory,
+           !deleteDiskFile(directory.appendingPathComponent(key + ".tile")) { return false }
+        diskIndex.removeValue(forKey: key)
+        if let previous = entry.previous { diskIndex[previous]?.next = entry.next } else { diskOldest = entry.next }
+        if let next = entry.next { diskIndex[next]?.previous = entry.previous } else { diskNewest = entry.previous }
+        diskBytes -= entry.bytes
+        return true
+    }
+
+    private func deleteDiskFile(_ file: URL) -> Bool {
+        do { try FileManager.default.removeItem(at: file); return true }
+        catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile { return true }
+        catch {
+            // Keep the indexed byte cost if deletion failed. Never admit a
+            // replacement based on space that was not actually reclaimed.
+            diskWritesEnabled = false
+            return false
+        }
+    }
+
+    private func clearEntries() {
+        memory.removeAll(); recency.removeAll(); memoryBytes = 0
+        for key in Array(diskIndex.keys) { removeDisk(key) }
+        nextDiskExpiry = nil
+    }
+
+    override func removeAllCachedResponses() {
+        lock.lock(); defer { lock.unlock() }; clearEntries()
+    }
+
+    override var currentMemoryUsage: Int {
+        lock.lock(); defer { lock.unlock() }; return memoryBytes
+    }
+    override var currentDiskUsage: Int {
+        lock.lock(); defer { lock.unlock() }; return diskBytes
+    }
+    func snapshot() -> CacheSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        return .init(diskEntries: diskIndex.count, directoryScans: directoryScans, diskWritesEnabled: diskWritesEnabled)
+    }
+    override func removeCachedResponse(for request: URLRequest) {
+        guard let identity = identity(request) else { return }
+        lock.lock(); defer { lock.unlock() }
+        if let entry = memory.removeValue(forKey: identity.tile) { memoryBytes -= entry.bytes.count }
+        recency.removeAll { $0 == identity.tile }
+        removeDisk(identity.tile)
+    }
+    override func removeCachedResponses(since date: Date) {
+        lock.lock(); defer { lock.unlock() }
+        // Conservative invalidation is safe and infrequent; never leave custom
+        // storage behind when the platform requests a cache clear.
+        clearEntries()
+    }
+    override func getCachedResponse(for dataTask: URLSessionDataTask,
+                                    completionHandler: @escaping @Sendable (CachedURLResponse?) -> Void) {
+        completionHandler((dataTask.currentRequest ?? dataTask.originalRequest).flatMap { cachedResponse(for: $0) })
+    }
+    override func storeCachedResponse(_ cachedResponse: CachedURLResponse, for dataTask: URLSessionDataTask) {
+        if let request = dataTask.currentRequest ?? dataTask.originalRequest { storeCachedResponse(cachedResponse, for: request) }
+    }
+    override func removeCachedResponse(for dataTask: URLSessionDataTask) {
+        if let request = dataTask.currentRequest ?? dataTask.originalRequest { removeCachedResponse(for: request) }
+    }
+}
 
 enum NativeBasemapUnavailableReason: Equatable, Sendable {
     case unsafeEndpoint

@@ -58,22 +58,82 @@ enum NativeRadarTransitionTests {
         precondition(abs(result.evidence.correctionX - 2.4) < 1e-12 && result.evidence.correctionY == 0)
         precondition(result.frame.validTime == target.validTime && result.frame.bounds == bounds && result.frame.encoding == encoding)
         precondition(result.evidence.observedAgeMinutes == 2 && result.evidence.cycleAgeMinutes == 17)
-        precondition(result.frame.validDataMask.contains(0) && result.evidence.validCoverage < 1)
+        precondition(result.frame.completeCoverage && result.evidence.validCoverage == 1)
+        precondition(result.evidence.enhancementCoverage < 1)
         // Expected pixels use the already oracle-tested numeric composition;
-        // coverage is independently checked from the exact backward coordinates.
+        // source support and feathering are independently checked from exact
+        // backward coordinates. Crop boundaries are not model coverage holes.
         let expectedPrediction = try RadarNumericContract.translateTexture(latest.texture, dx: 18, dy: -9)
         let expectedModel = try RadarNumericContract.translateTexture(target.texture, dx: 2.4, dy: 0)
         let expected = try RadarNumericContract.blendTextures(expectedPrediction, expectedModel, forecastWeight: 0.5)
+        func assertEdgeFallback(_ actual: Transition.Result, original: RadarNumericContract.Texture,
+                                enhanced: RadarNumericContract.Texture,
+                                shifts: [(Double, Double)]) {
+            var validEnhancement = 0, unchangedInterior = 0, feathered = 0, originalEdges = 0
+            for row in 0..<height {
+                for column in 0..<width {
+                    let index = row * width + column
+                    let sourceCoordinates = shifts.map { (Double(column) - $0.0, Double(row) - $0.1) }
+                    let supported = sourceCoordinates.allSatisfy {
+                        $0.0 >= 0 && $0.0 <= Double(width - 1) && $0.1 >= 0 && $0.1 <= Double(height - 1)
+                    }
+                    var edgeDistances: [Double] = [8]
+                    for (offset, source) in zip(shifts, sourceCoordinates) {
+                        if offset.0 > 0 { edgeDistances.append(source.0) }
+                        if offset.0 < 0 { edgeDistances.append(Double(width - 1) - source.0) }
+                        if offset.1 > 0 { edgeDistances.append(source.1) }
+                        if offset.1 < 0 { edgeDistances.append(Double(height - 1) - source.1) }
+                    }
+                    let linear = supported ? max(0, min(1, edgeDistances.min()! / 8)) : 0
+                    let enhancedWeight = 3 * linear * linear - 2 * linear * linear * linear
+                    let value = Double(original.bytes[index])
+                        + (Double(enhanced.bytes[index]) - Double(original.bytes[index])) * enhancedWeight
+                    let expectedByte = UInt8(max(0, min(255, floor(value + 0.5))))
+                    precondition(actual.frame.validDataMask[index] == 1, "Available original model became unavailable")
+                    precondition(actual.frame.texture.bytes[index] == expectedByte, "Unexpected edge blend at \(column),\(row)")
+                    if supported { validEnhancement += 1 }
+                    if linear == 1 {
+                        unchangedInterior += 1
+                        precondition(actual.frame.texture.bytes[index] == enhanced.bytes[index])
+                    } else if linear == 0 {
+                        originalEdges += 1
+                        precondition(actual.frame.texture.bytes[index] == original.bytes[index])
+                    } else { feathered += 1 }
+                }
+            }
+            precondition(unchangedInterior > 0 && feathered > 0 && originalEdges > 0)
+            precondition(actual.evidence.enhancementCoverage == Double(validEnhancement) / Double(width * height))
+            precondition(actual.evidence.validCoverage == 1)
+        }
+        assertEdgeFallback(result, original: target.texture, enhanced: expected, shifts: [(18, -9), (2.4, 0)])
         for row in 0..<height {
             for column in 0..<width {
                 let index = row * width + column
-                let valid = column >= 18 && row <= height - 10 && Double(column) >= 2.4
-                precondition(result.frame.validDataMask[index] == (valid ? 1 : 0))
-                precondition(result.frame.texture.bytes[index] == (valid ? expected.bytes[index] : 0))
+                if column >= 26 && row <= height - 18 {
+                    precondition(result.frame.texture.bytes[index] == expected.bytes[index], "Interior changed")
+                }
             }
         }
         let firstExpected = try RadarNumericContract.translateTexture(latest.texture, dx: 6, dy: -3)
-        precondition(first.frame.texture == firstExpected)
+        assertEdgeFallback(first, original: anchor.texture, enhanced: firstExpected, shifts: [(6, -3)])
+        // Nonzero original guidance at every crop edge proves fallback preserves
+        // actual forecast echoes instead of merely relabeling missing/clear data.
+        let edgeSignal = try RadarNumericContract.Texture(width: width, height: height,
+            bytes: [UInt8](repeating: 128, count: width * height))
+        let edgeTarget = try frame(edgeSignal, target.validTime)
+        let edgeResult = ready(try compose(target: edgeTarget))
+        let edgeEnhanced = try RadarNumericContract.blendTextures(expectedPrediction,
+            RadarNumericContract.translateTexture(edgeSignal, dx: 2.4, dy: 0), forecastWeight: 0.5)
+        assertEdgeFallback(edgeResult, original: edgeSignal, enhanced: edgeEnhanced, shifts: [(18, -9), (2.4, 0)])
+        precondition(edgeResult.frame.texture.bytes[0] == 128)
+        precondition(edgeResult.frame.texture.bytes[(height - 1) * width + width - 1] == 128)
+        // At a clear-prediction scanline the eight-pixel seam is deterministic,
+        // monotonic and reaches the unchanged interior without a one-pixel jump.
+        var seamValues: [UInt8] = []
+        for column in 18...26 { seamValues.append(edgeResult.frame.texture.bytes[column]) }
+        precondition(seamValues.first == 128 && seamValues.last == 64)
+        precondition(zip(seamValues, seamValues.dropFirst()).allSatisfy { $0 >= $1 })
+        precondition(Set(seamValues).count > 4)
         // The result is independent of supplied history order, but never time identity.
         let reordered = ready(try compose(Array(observed.reversed())))
         precondition(reordered.frame.texture == result.frame.texture && reordered.evidence == result.evidence)
@@ -104,8 +164,10 @@ enum NativeRadarTransitionTests {
         rejected("model-frame-identity-mismatch", try compose(target: frame(target.texture, anchor.validTime)))
         rejected("forecast-boundary-outside-safe-window", try compose(anchor: frame(anchor.texture, "2026-08-17T18:45:00.001Z")))
         rejected("target-outside-handoff-window", try compose(target: frame(target.texture, "2026-08-17T19:25:00.001Z")))
+        rejected("nowcast-leaves-observed-domain", try compose(target: frame(target.texture, "2026-08-17T19:25:00Z")))
         var missing = latest.validDataMask; missing[missing.count / 2] = 0
         rejected("incomplete-source-coverage", try compose([observed[0], observed[1], frame(latest.texture, latest.validTime, mask: missing)]))
+        rejected("incomplete-source-coverage", try compose(anchor: frame(anchor.texture, anchor.validTime, mask: missing)))
         rejected("incomplete-source-coverage", try compose(target: frame(target.texture, target.validTime, mask: missing)))
         rejected("spatial-contract-mismatch", try compose(target: frame(target.texture, target.validTime,
             changedBounds: .init(minLat: 38, minLon: -92, maxLat: 39, maxLon: -90))))
@@ -116,7 +178,9 @@ enum NativeRadarTransitionTests {
         let mismatched = try frame(clearTexture, anchor.validTime)
         let bridge = ready(try compose(anchor: mismatched, target: mismatched))
         precondition(!bridge.evidence.modelAligned && bridge.evidence.forecastWeight == 0)
-        precondition(bridge.frame.texture == first.frame.texture, "Model mismatch must not erase reliable radar motion")
+        assertEdgeFallback(bridge, original: mismatched.texture, enhanced: firstExpected, shifts: [(6, -3)])
+        precondition(bridge.frame.texture.bytes[30 * width + 40] == first.frame.texture.bytes[30 * width + 40],
+            "Model mismatch must not erase reliable radar motion in the interior")
         precondition(bridge.evidence.correctionX == 0 && bridge.evidence.correctionFactor == 0)
         let laterBridge = ready(try compose(anchor: mismatched))
         precondition(laterBridge.evidence.forecastWeight > 0 && laterBridge.evidence.forecastWeight < 1)
@@ -147,7 +211,8 @@ enum NativeRadarTransitionTests {
         // A valid but nonuniform stationary echo is not manufactured motion.
         let stationary = try observed.map { try frame(latest.texture, $0.validTime) }
         let still = ready(try compose(stationary, anchor: frame(latest.texture, anchor.validTime), target: frame(latest.texture, target.validTime)))
-        precondition(still.evidence.motion.speedPixelsPerMinute == 0 && still.evidence.validCoverage == 1)
+        precondition(still.evidence.motion.speedPixelsPerMinute == 0 && still.evidence.validCoverage == 1
+            && still.evidence.enhancementCoverage == 1)
         precondition(still.frame.texture == latest.texture && still.frame.validDataMask == latest.validDataMask)
         for index in observed.indices {
             precondition(observed[index].texture.bytes == snapshots[index].0 && observed[index].validDataMask == snapshots[index].1
@@ -224,7 +289,7 @@ enum NativeRadarTransitionTests {
         precondition(!reusable([1, 1], [1]) && !reusable([1, 2], [1, 1]))
         precondition(!reusable([-1, 1], [1]) && !reusable([1, 2], [-1]))
         precondition(!reusable(Array(0...8), [1]) && !reusable([1, 2], [1], cycle: "invalid"))
-        print("PASS Native transition: gated motion and correction, exact advertised times, independent translated-mask/pixel checks, stationary signal, immutable inputs, cancellation, source/cycle/time/coverage/conflict fallback")
+        print("PASS Native transition: gated motion and correction, exact advertised times, independent enhancement-edge fallback/feather/interior checks, genuine source coverage rejection, stationary signal, immutable inputs, cancellation, source/cycle/time/conflict fallback")
         print("PASS Transition orchestration policy: exact freshness/future boundaries, changed scan metadata, stable clock identity, canonical times, and complete target+anchor field reuse")
         print("No invented intermediate slots; derived fields remain predictions. This is not physical-device or live-model validation.")
     }

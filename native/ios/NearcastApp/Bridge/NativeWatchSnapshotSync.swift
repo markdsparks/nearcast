@@ -1,6 +1,8 @@
 import Foundation
 import WatchConnectivity
 
+private let nearcastWatchSnapshotRequestType = "nearcast.widget.snapshot.request.v1"
+
 @MainActor
 final class NativeWatchSnapshotSync: NSObject, ObservableObject {
     static let shared = NativeWatchSnapshotSync()
@@ -18,9 +20,21 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
     private var pendingPriorityTransfer = false
     private var lastSnapshotData: Data?
     private var lastPlaceData: Data?
+    private var lastPriorityContext: PriorityContext?
     private var lastUrgentAlertIdentity: String?
     private var lastPriorityTransferAt: Date?
     private var pendingFlushTask: Task<Void, Never>?
+
+    /// Publication generations change on every receipt; they are not a place
+    /// change and must not consume the Watch's limited priority-transfer budget.
+    private struct PriorityContext: Equatable {
+        let placeID: String?
+        let latitude: Double?
+        let longitude: Double?
+        let tracksCurrentLocation: Bool
+        let windUnit: String
+        let uses24HourClock: Bool?
+    }
 
     private override init() {
         super.init()
@@ -48,38 +62,30 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
             return
         }
 
-        let placeChanged = placeData != lastPlaceData
+        let placeDataChanged = placeData != lastPlaceData
+        let priorityContext = Self.priorityContext(snapshotData: snapshotData, placeData: placeData)
+        let placeOrSettingsChanged = priorityContext != lastPriorityContext
         let urgentAlertIdentity = Self.urgentAlertIdentity(in: snapshotData)
         let urgentAlertChanged = urgentAlertIdentity != lastUrgentAlertIdentity
-        guard snapshotData != lastSnapshotData || placeChanged else { return }
+        guard snapshotData != lastSnapshotData || placeDataChanged || pendingPayload != nil else { return }
         lastSnapshotData = snapshotData
         lastPlaceData = placeData
+        lastPriorityContext = priorityContext
         lastUrgentAlertIdentity = urgentAlertIdentity
 
-        var payload: [String: Any] = [
-            "type": "nearcast.widget.snapshot.v1",
-            "snapshot": snapshotData,
-            "sentAt": Date().timeIntervalSince1970
-        ]
-        if let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: snapshotData) {
-            if let revision = snapshot.ownerRevision { payload["ownerRevision"] = revision }
-            if let generation = snapshot.publicationGeneration { payload["publicationGeneration"] = generation }
-        }
-        if let placeData {
-            payload["place"] = placeData
-        }
+        let payload = Self.payload(snapshotData: snapshotData, placeData: placeData)
 
         let session = WCSession.default
         refreshSessionState(session)
         guard session.activationState == .activated else {
             pendingPayload = payload
-            pendingPriorityTransfer = pendingPriorityTransfer || placeChanged || urgentAlertChanged
+            pendingPriorityTransfer = pendingPriorityTransfer || placeOrSettingsChanged || urgentAlertChanged
             lastError = nil
             schedulePendingFlush()
             return
         }
 
-        sendPayload(payload, session: session, forcePriority: placeChanged || urgentAlertChanged)
+        sendPayload(payload, session: session, forcePriority: placeOrSettingsChanged || urgentAlertChanged)
     }
 
     var statusRows: [(String, String)] {
@@ -136,6 +142,35 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         ].joined(separator: "|")
     }
 
+    private static func priorityContext(snapshotData: Data, placeData: Data?) -> PriorityContext? {
+        guard let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: snapshotData) else { return nil }
+        let place = placeData.flatMap { try? JSONDecoder().decode(NearcastWidgetPlace.self, from: $0) }
+        return PriorityContext(
+            placeID: place?.id,
+            latitude: place?.latitude,
+            longitude: place?.longitude,
+            tracksCurrentLocation: place?.tracksCurrentLocation ?? false,
+            windUnit: snapshot.windUnit,
+            uses24HourClock: snapshot.uses24HourClock
+        )
+    }
+
+    private static func payload(snapshotData: Data, placeData: Data?) -> [String: Any] {
+        var payload: [String: Any] = [
+            "type": "nearcast.widget.snapshot.v1",
+            "snapshot": snapshotData,
+            "sentAt": Date().timeIntervalSince1970
+        ]
+        if let snapshot = try? JSONDecoder().decode(NearcastWidgetSnapshot.self, from: snapshotData) {
+            if let revision = snapshot.ownerRevision { payload["ownerRevision"] = revision }
+            if let generation = snapshot.publicationGeneration { payload["publicationGeneration"] = generation }
+        }
+        if let placeData {
+            payload["place"] = placeData
+        }
+        return payload
+    }
+
     private func flushPendingPayload(_ session: WCSession = .default) {
         guard session.activationState == .activated, let payload = pendingPayload else { return }
         let forcePriority = pendingPriorityTransfer
@@ -144,27 +179,86 @@ final class NativeWatchSnapshotSync: NSObject, ObservableObject {
         sendPayload(payload, session: session, forcePriority: forcePriority)
     }
 
+    /// `updateApplicationContext` is meant to be durable, but a companion can
+    /// be installed or reinstalled after the phone successfully saved its
+    /// last context. In that case there is no pending error to flush and the
+    /// next identical forecast would otherwise be deduplicated forever for
+    /// this process. Restage the latest committed receipt when Watch state
+    /// changes; this changes no forecast or owner data.
+    private func replayLatestSnapshot(_ session: WCSession = .default) {
+        guard session.activationState == .activated,
+              let snapshotData = lastSnapshotData else { return }
+        sendPayload(
+            Self.payload(snapshotData: snapshotData, placeData: lastPlaceData),
+            session: session
+        )
+    }
+
+    /// Handles an explicit recovery request from the Watch. This is important
+    /// for a fresh Watch install: the phone may have saved a valid snapshot
+    /// before the Watch app existed, so there is no new weather receipt to
+    /// trigger a normal push. Re-reading the durable phone publication keeps
+    /// this recovery path within the same owner/generation contract.
+    private func replayStoredPublication(_ session: WCSession = .default) {
+        guard let publication = NearcastWidgetSnapshotStore.storedPublication(),
+              publication.isCoherent,
+              let snapshotData = try? JSONEncoder().encode(publication.snapshot) else { return }
+        let placeData = publication.place.flatMap { try? JSONEncoder().encode($0) }
+        lastSnapshotData = snapshotData
+        lastPlaceData = placeData
+        lastPriorityContext = Self.priorityContext(snapshotData: snapshotData, placeData: placeData)
+        lastUrgentAlertIdentity = Self.urgentAlertIdentity(in: snapshotData)
+        let payload = Self.payload(snapshotData: snapshotData, placeData: placeData)
+        guard session.activationState == .activated else {
+            pendingPayload = payload
+            pendingPriorityTransfer = true
+            schedulePendingFlush()
+            return
+        }
+        // A missing Watch snapshot is a direct user-requested recovery, so it
+        // is worth taking the available complication-priority lane as well.
+        sendPayload(payload, session: session, forcePriority: true)
+    }
+
+    private func handleSnapshotRequest(_ payload: [String: Any], session: WCSession) {
+        guard payload["type"] as? String == nearcastWatchSnapshotRequestType else { return }
+        refreshSessionState(session)
+        replayStoredPublication(session)
+    }
+
     private func sendPayload(_ payload: [String: Any], session: WCSession, forcePriority: Bool = false) {
+        // Every attempted send supersedes the older pending context. Otherwise
+        // A failing, followed by B succeeding, could leave A queued to overwrite
+        // B on the next Watch-state callback (including a fresh Watch install).
+        let needsPriorityTransfer = forcePriority || pendingPriorityTransfer
+        pendingPayload = payload
+        pendingPriorityTransfer = needsPriorityTransfer
         do {
             try session.updateApplicationContext(payload)
+            pendingPayload = nil
+            pendingPriorityTransfer = false
             lastSnapshotSentAt = Date()
             lastError = nil
             pendingFlushTask?.cancel()
             pendingFlushTask = nil
         } catch {
             pendingPayload = payload
-            lastSnapshotData = nil
-            lastPlaceData = nil
+            // Keep the latest receipt available for install/state replays.
+            // pendingPayload lets an identical observation retry without
+            // pretending its place or urgent-alert identity changed again.
             lastError = "Application context failed: \(error.localizedDescription)"
             schedulePendingFlush()
         }
 
         guard session.isPaired, session.isWatchAppInstalled, session.isComplicationEnabled else { return }
         let priorityInterval = lastPriorityTransferAt.map { Date().timeIntervalSince($0) } ?? .infinity
-        guard forcePriority || priorityInterval >= 30 * 60 else { return }
+        guard needsPriorityTransfer || priorityInterval >= 30 * 60 else { return }
         guard session.remainingComplicationUserInfoTransfers > 0 else { return }
         session.transferCurrentComplicationUserInfo(payload)
         lastPriorityTransferAt = Date()
+        // A successful priority transfer need not be repeated if application
+        // context itself still needs a retry.
+        pendingPriorityTransfer = false
     }
 
     /// WatchConnectivity commonly comes online just after the app has written
@@ -193,9 +287,16 @@ extension NativeWatchSnapshotSync: WCSessionDelegate {
         Task { @MainActor in
             self.refreshSessionState(session)
             if let error {
+                // A transient activation error is recoverable. Leaving this
+                // latch set makes every pending retry skip session.activate().
+                self.didActivate = false
                 self.lastError = "Activation failed: \(error.localizedDescription)"
             } else {
+                let hadPendingPayload = self.pendingPayload != nil
                 self.flushPendingPayload(session)
+                if !hadPendingPayload {
+                    self.replayLatestSnapshot(session)
+                }
             }
         }
     }
@@ -222,7 +323,23 @@ extension NativeWatchSnapshotSync: WCSessionDelegate {
     nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
         Task { @MainActor in
             self.refreshSessionState(session)
-            self.flushPendingPayload(session)
+            if self.pendingPayload != nil {
+                self.flushPendingPayload(session)
+            } else {
+                self.replayLatestSnapshot(session)
+            }
+        }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        Task { @MainActor in
+            self.handleSnapshotRequest(message, session: session)
+        }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        Task { @MainActor in
+            self.handleSnapshotRequest(userInfo, session: session)
         }
     }
 }

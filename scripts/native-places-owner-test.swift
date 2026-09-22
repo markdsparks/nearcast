@@ -63,6 +63,82 @@ struct NativePlacesOwnerTests {
         let store = NativePlacesOwnerStore(directory: directory)
         expect(NativePlacesOwnerStore.readBootstrap(directory: directory) == .unmigrated, "Fresh install is explicitly unmigrated")
         expect(try await store.snapshot() == nil, "Absence is not an empty owner inventory")
+
+        // A fresh native-only install can start a new owner from a place that
+        // native search/current-location resolved. It must not manufacture an
+        // owner from a preview cache or retain fake legacy-import evidence.
+        let nativeBootstrapDirectory = root.appendingPathComponent("native-bootstrap")
+        let nativeBootstrapStore = NativePlacesOwnerStore(directory: nativeBootstrapDirectory)
+        let nativeStartingPlace = place("native-start", numeric: false)
+        let nativePreferences = NativePlacesPreferences(unit: "fahrenheit", timeFormat: "auto", theme: "auto",
+            reactiveSkyEnabled: false, reactiveSkyMotionAllowed: false)
+        let nativeBootstrap = try await nativeBootstrapStore.bootstrapNative(place: nativeStartingPlace, preferences: nativePreferences)
+        var expectedNativeSavedPlace = nativeStartingPlace
+        expectedNativeSavedPlace.followsCurrentLocation = false
+        expect(nativeBootstrap.revision == 1 && nativeBootstrap.source.owner == "native" &&
+            nativeBootstrap.source.selectedPlace == nativeStartingPlace && nativeBootstrap.source.lastPlace == nativeStartingPlace,
+            "Explicit native bootstrap commits the selected native place as a first owner generation")
+        expect(nativeBootstrap.source.savedPlaces == [expectedNativeSavedPlace] && nativeBootstrap.source.preferences == nativePreferences,
+            "Explicit native bootstrap saves exactly its chosen place and native defaults")
+        expect(!FileManager.default.fileExists(atPath: nativeBootstrapDirectory.appendingPathComponent(sourceExportName).path),
+            "Native bootstrap never fabricates legacy import evidence")
+        expect(NativePlacesOwnerStore.readBootstrap(directory: nativeBootstrapDirectory) == .owned(nativeBootstrap),
+            "Native bootstrap survives a fresh reader as a verified owner")
+        let attemptedLegacyReplacement = try await nativeBootstrapStore.activate(source: source())
+        expect(attemptedLegacyReplacement == nativeBootstrap,
+            "A later legacy handover cannot replace an explicit native owner")
+
+        var nativeRemove = command("remove", nativeBootstrap.source)
+        nativeRemove.id = nativeStartingPlace.id
+        let nativeRemoved = await nativeBootstrapStore.perform(command: nativeRemove)
+        expect(nativeRemoved.ok, "Fresh native place removal succeeds")
+        let nativeAfterRemoval = try await nativeBootstrapStore.snapshot()!
+        expect(nativeAfterRemoval.source.savedPlaces.isEmpty && nativeAfterRemoval.pendingDeletions.isEmpty,
+            "Fresh native removal does not create legacy notification work")
+        expect(nativeAfterRemoval.source.selectedPlace == nativeStartingPlace,
+            "Removing a bookmark does not discard the viewed forecast")
+
+        // Exercise the same writer as the old queue-producing path, then
+        // remove the test-only import evidence to model a pre-fix fresh profile.
+        var nativeSave = command("save", nativeAfterRemoval.source)
+        nativeSave.place = nativeStartingPlace
+        let nativeSaved = await nativeBootstrapStore.perform(command: nativeSave)
+        expect(nativeSaved.ok, "Re-save native test bookmark")
+        let testExport = nativeBootstrapDirectory.appendingPathComponent(sourceExportName)
+        try JSONEncoder().encode(source()).write(to: testExport)
+        var priorRemove = command("remove", nativeSaved.source!)
+        priorRemove.id = nativeStartingPlace.id
+        let priorRemoved = await nativeBootstrapStore.perform(command: priorRemove)
+        expect(priorRemoved.ok, "Prior queue-producing remove succeeds")
+        try FileManager.default.removeItem(at: testExport)
+        let reconciledNative = try await nativeBootstrapStore.snapshot()!
+        expect(reconciledNative.pendingDeletions.isEmpty && reconciledNative.deletionWatermark == 1,
+            "Pre-fix native-only cleanup queue is durably retired")
+        expect(reconciledNative.source == priorRemoved.source,
+            "Queue repair preserves user state and mutation receipts")
+        expect(await nativeBootstrapStore.perform(command: priorRemove).ok,
+            "An acknowledged native remove retry stays idempotent")
+
+        var liveStartingPlace = place("native-live", numeric: false)
+        liveStartingPlace.followsCurrentLocation = true
+        let liveBootstrap = try await NativePlacesOwnerStore(directory: root.appendingPathComponent("native-live-bootstrap"))
+            .bootstrapNative(place: liveStartingPlace, preferences: nativePreferences)
+        expect(liveBootstrap.source.selectedPlace?.followsCurrentLocation == true &&
+            liveBootstrap.source.lastPlace?.followsCurrentLocation == true &&
+            liveBootstrap.source.savedPlaces.first?.followsCurrentLocation == false,
+            "Native bootstrap preserves a live selected location but freezes the first saved place")
+
+        let stagedImportDirectory = root.appendingPathComponent("staged-import-before-native-bootstrap")
+        try FileManager.default.createDirectory(at: stagedImportDirectory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(source()).write(to: stagedImportDirectory.appendingPathComponent(sourceExportName))
+        do {
+            _ = try await NativePlacesOwnerStore(directory: stagedImportDirectory)
+                .bootstrapNative(place: nativeStartingPlace, preferences: nativePreferences)
+            preconditionFailure("Native bootstrap overwrote a staged verified legacy import")
+        } catch NativePlacesOwnerError.busy { }
+        expect(NativePlacesOwnerStore.readBootstrap(directory: stagedImportDirectory) == .unmigrated,
+            "A staged legacy import stays unmigrated instead of becoming a mixed native owner")
+
         let legacy = source()
         let first = try await store.activate(source: legacy)
         expect(first.version == 1 && first.revision == 1 && first.source.owner == "native", "Activation commits native ownership")

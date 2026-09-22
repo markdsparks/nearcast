@@ -46,9 +46,9 @@ enum NearcastWatchBackgroundRefresh {
         let fallback = NearcastWidgetSnapshot.current()
         _ = await NearcastWatchWeatherClient.refresh(fallback: fallback)
 
-        // A failed fetch deliberately leaves the cached snapshot untouched;
-        // reloading still lets the complication rebuild its projected entries
-        // relative to the new current time.
+        // Same-place failures retain useful cache; known travel invalidates
+        // origin weather before fetching. Reload either result so complications
+        // project the destination cache or show update-needed, never the origin.
         WidgetCenter.shared.reloadAllTimelines()
     }
 }

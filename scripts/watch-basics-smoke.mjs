@@ -126,7 +126,7 @@ for (const [label, client] of [["Watch", watchApp], ["Complications", complicati
   assert.match(client, /NearcastSharedForecastClock\.unitsMatch\(latestSnapshot\.windUnit, requestedMetric:/, `${label} rechecks the current unit setting immediately before saving`);
 }
 assert.match(complications, /complicationTimelineDates[\s\S]*24 \* 60 \* 60[\s\S]*compactMap\(\\\.startsAt\)/, "complications advance on cached forecast boundaries across the available day");
-assert.match(complications, /let staleDate = complicationWeatherValidUntil\(snapshot\)[\s\S]*dates\.append\(staleDate\)/, "the complication timeline ends with an explicit stale state");
+assert.match(complications, /appendDeadline\(complicationWeatherValidUntil\(snapshot\)\.timeIntervalSince1970, allowsBeyondHorizon: true\)/, "the complication timeline retains its exact hard weather-validity transition");
 assert.match(complications, /timeoutInterval: 15/, "complication networking uses the bounded shared-forecast budget before cached fallback");
 assert.match(complications, /shouldPromoteCurrentWeather\(from: projection\)/, "the current complication entry preserves a newer observation but advances an old one");
 assert.match(complications, /latest\.weatherSavedTime >= weather\.weatherSavedTime[\s\S]*return latest/, "cached complication weather cannot overwrite a newer shared snapshot");
@@ -159,8 +159,9 @@ assert.match(app, /alertSource: widgetAlert\?\.source \|\| null/, "the phone pre
 assert.match(app, /alertUrgency: widgetAlert\?\.urgency \|\| null[\s\S]*alertCertainty: widgetAlert\?\.certainty \|\| null/, "the phone preserves official urgency and certainty instead of reinterpreting them natively");
 assert.match(snapshot, /func companionStory[\s\S]*urgentOfficialAlertBrief[\s\S]*canonicalEventBrief/, "shared companions use one warning-before-forecast story contract");
 assert.match(snapshot, /normalizedTitle\.contains\("watch"\)[\s\S]*normalizedTitle\.contains\("warning"\)/, "planning alerts do not preempt the forecast while warnings do");
-assert.match(sync, /urgentAlertChanged[\s\S]*forcePriority: placeChanged \|\| urgentAlertChanged/, "new and cleared urgent alerts bypass routine Watch transfer throttling");
-assert.match(complications, /alertDeadline[\s\S]*alertDeadline \+ 1/, "complications schedule an exact transition that removes expired alerts");
+assert.match(sync, /urgentAlertChanged[\s\S]*forcePriority: placeOrSettingsChanged \|\| urgentAlertChanged/, "new and cleared urgent alerts bypass routine Watch transfer throttling");
+assert.match(complications, /appendDeadline\(alertDeadline, allowsBeyondHorizon: true\)/, "complications schedule an exact transition that removes expired alerts");
+assert.match(complications, /return Array\(Set\(dates \+ deadlines\)\)\.sorted\(\)/, "hard complication deadlines are never coalesced with nearby ordinary entries");
 
 const version = app.match(/const VERSION = "([^"]+)"/)?.[1];
 assert.ok(version, "app version is declared");

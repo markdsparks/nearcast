@@ -141,6 +141,8 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     }
     let resolution = await resolveWidgetPlace(selectedPlace)
     let place = resolution.place
+    let location = NearcastCompanionLocation(latitude: place.latitude,
+        longitude: place.longitude, resolvedAt: refreshStartedAt)
     let pendingResolution = storedResolvedLocation(for: selectedPlace)
     let canRefreshResolvedPlace = !selectedPlace.tracksCurrentLocation
         || resolution.usedLiveLocation
@@ -154,7 +156,9 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     var refreshedWeather: NearcastWidgetSnapshot?
     if canRefreshResolvedPlace,
        resolution.meaningfullyMoved || shouldRefreshWidgetWeather(cached, now: refreshStartedAt) {
-        refreshedWeather = try? await NearcastWidgetForecastClient.fetchSnapshot(for: place, fallback: cached)
+        refreshedWeather = try? await NearcastWidgetForecastClient.fetchSnapshot(for: place,
+            fallback: cached.preparingWeather(at: location, selected: selectedPlace))
+        refreshedWeather?.weatherLocation = location
         if resolution.meaningfullyMoved {
             // The canonical event was authored for the previous coordinate.
             // Raw destination weather may refresh natively, but only the web
@@ -187,12 +191,20 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
             .expiringCompanionContent(at: Date().timeIntervalSince1970)
         unavailable.placeName = place.displayLabel
         unavailable.isAvailable = false
+        // The selected Current Location identity still has the phone's anchor
+        // coordinate. Prevent same-selection freshness arbitration from
+        // restoring origin weather after we have confirmed travel.
+        unavailable.nativeWeatherInvalidation = true
+        unavailable.weatherLocation = location
         unavailable.weatherSavedAt = 0
         unavailable.timeline = nil
         unavailable.daily = nil
         unavailable.clearCanonicalEvent()
         unavailable.clearForecastConfidence()
         unavailable.clearOfficialAlert(checkedAt: Date().timeIntervalSince1970)
+        unavailable.alertLocation = location
+        unavailable.alertStateReady = false
+        if case .success = refreshedAlert { unavailable.alertStateReady = true }
         if case .success(let alert, let count, let fetchedAt) = refreshedAlert,
            let alert {
             applyWidgetAlert(alert, count: count, fetchedAt: fetchedAt, to: &unavailable)
@@ -222,6 +234,7 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
     if !phoneDeliveredNewerAlert {
         switch refreshedAlert {
         case .success(let alert, let count, let fetchedAt):
+            snapshot.alertLocation = location
             if let alert {
                 applyWidgetAlert(alert, count: count, fetchedAt: fetchedAt, to: &snapshot)
             } else {
@@ -233,6 +246,8 @@ private func refreshedWidgetSnapshot() async -> NearcastWidgetSnapshot {
             if resolution.meaningfullyMoved {
                 // An alert for the prior coordinate must not follow the person.
                 snapshot.clearOfficialAlert(checkedAt: Date().timeIntervalSince1970)
+                snapshot.alertLocation = nil
+                snapshot.alertStateReady = false
             }
             // At a fixed place, preserve the last known alert through transient
             // NWS failures. Its expiry or short no-expiry TTL still bounds it.
@@ -801,6 +816,14 @@ enum NearcastWidgetForecastClient {
         }
 
         let forecast = try JSONDecoder().decode(WidgetForecastResponse.self, from: data)
+        if !fallback.hasWeatherData {
+            // Missing destination readings cannot be filled with origin values.
+            guard forecast.current.temperature?.isFinite == true,
+                  forecast.current.apparentTemperature?.isFinite == true,
+                  forecast.current.windSpeed?.isFinite == true,
+                  forecast.current.weatherCode != nil,
+                  forecast.current.isDay != nil else { throw URLError(.cannotParseResponse) }
+        }
         guard forecast.nearcast?.matchesRequest(latitude: place.latitude, longitude: place.longitude, metric: usesMetricUnits) != false else {
             throw URLError(.cannotParseResponse)
         }
@@ -1330,7 +1353,7 @@ struct NearcastStormActivityWidget: Widget {
                             Image(systemName: "location.north.line.fill")
                                 .font(.system(size: 8, weight: .black))
                                 .foregroundStyle(.cyan.opacity(0.82))
-                            Text("StormScope")
+                            Text(context.state.isNativeEvidence ? "Nearcast" : "StormScope")
                                 .font(.system(size: 8, weight: .black, design: .rounded))
                                 .tracking(0.7)
                                 .textCase(.uppercase)
@@ -1351,12 +1374,14 @@ struct NearcastStormActivityWidget: Widget {
                     VStack(alignment: .trailing, spacing: 0) {
                         HStack(alignment: .firstTextBaseline, spacing: 1) {
                             StormArrivalCountdown(state: context.state, compact: true)
-                            Text("min")
-                                .font(.system(size: 9, weight: .black, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.78))
+                            if !context.state.isNativeEvidence {
+                                Text("min")
+                                    .font(.system(size: 9, weight: .black, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.78))
+                            }
                         }
                         .lineLimit(1)
-                        Text("ETA")
+                        Text(context.state.isNativeEvidence ? "WEATHER NOTICE" : "ETA")
                             .font(.system(size: 8, weight: .black, design: .rounded))
                             .tracking(0.8)
                             .foregroundStyle(.white.opacity(0.54))
@@ -1414,16 +1439,18 @@ struct NearcastStormActivityLockView: View {
     var body: some View {
         ZStack {
             StormActivityBackdrop(severity: context.state.severityLevel)
-            StormActivityPathVisual(state: context.state)
-                .padding(.horizontal, 18)
-                .padding(.top, 46)
-                .padding(.bottom, 46)
+            if !context.state.isNativeEvidence {
+                StormActivityPathVisual(state: context.state)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 46)
+                    .padding(.bottom, 46)
+            }
             StormActivityTextScrim()
 
             VStack(alignment: .leading, spacing: 11) {
                 HStack(alignment: .top, spacing: 16) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("StormScope")
+                        Text(context.state.isNativeEvidence ? "Nearcast weather notice" : "StormScope")
                             .font(.system(size: 10, weight: .black, design: .rounded))
                             .tracking(1.5)
                             .textCase(.uppercase)
@@ -1446,7 +1473,7 @@ struct NearcastStormActivityLockView: View {
                         StormArrivalCountdown(state: context.state)
                             .lineLimit(1)
                             .minimumScaleFactor(0.70)
-                        Text(context.state.arrivalDate == nil ? "min" : "until arrival")
+                        Text(context.state.isNativeEvidence ? "Saved reading" : (context.state.arrivalDate == nil ? "min" : "until arrival"))
                             .font(.system(size: 12, weight: .black, design: .rounded))
                             .foregroundStyle(.white.opacity(0.72))
                         Text(context.isStale ? "Update delayed" : context.state.confidence)
@@ -1467,7 +1494,7 @@ struct NearcastStormActivityLockView: View {
                 Spacer(minLength: 18)
 
                 HStack(spacing: 8) {
-                    StormFactPill(label: "Confidence", value: context.state.confidence, tone: confidenceColor)
+                    StormFactPill(label: context.state.isNativeEvidence ? "Source" : "Confidence", value: context.state.confidence, tone: confidenceColor)
                     StormFactPill(label: middleFactLabel, value: middleFactValue, tone: .white.opacity(0.92))
                     StormFactPill(label: "Updated", value: updatedText, tone: .white.opacity(0.92))
                 }
@@ -1554,7 +1581,9 @@ struct StormArrivalCountdown: View {
 
     var body: some View {
         Group {
-            if let arrival = state.arrivalDate, arrival > Date() {
+            if state.isNativeEvidence {
+                Image(systemName: state.geometryQuality == "official-alert" ? "exclamationmark.triangle.fill" : "cloud.bolt.fill")
+            } else if let arrival = state.arrivalDate, arrival > Date() {
                 Text(timerInterval: Date()...arrival, countsDown: true, showsHours: false)
             } else if state.etaMinutes <= 0 {
                 Text("Now")
@@ -1767,6 +1796,10 @@ struct StormPathCone: Shape {
 }
 
 extension NearcastStormActivityAttributes.ContentState {
+    var isNativeEvidence: Bool {
+        ["official-alert", "hourly-forecast"].contains(geometryQuality ?? "")
+    }
+
     var arrivalDate: Date? {
         guard let arrivalAtEpoch, arrivalAtEpoch > 0 else { return nil }
         return Date(timeIntervalSince1970: arrivalAtEpoch)
@@ -1815,6 +1848,10 @@ extension NearcastStormActivityAttributes.ContentState {
 
     var geometryQualityLabel: String {
         switch geometryQuality?.lowercased() {
+        case "official-alert":
+            return "Official alert · no ETA"
+        case "hourly-forecast":
+            return "Hourly forecast · no ETA"
         case "tracked", "radar":
             return "Tracked path"
         case "forecast":

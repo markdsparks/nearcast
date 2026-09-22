@@ -2,6 +2,24 @@
 
 Created September 18, 2026. Status: **plan approved in direction; implementation and device gates not yet complete**.
 
+## September 20 decision: fresh native start
+
+The user explicitly approved starting fresh in native Nearcast. Importing old
+places, plans, or watch selections is **not a cutover requirement**. The older
+migration/ownership phases below are historical implementation context, not
+requirements to finish before native setup. Keep already-created native data;
+do not clear browser storage, restore an old export over native edits, or
+silently adopt old notification consent.
+
+Normal native startup now requires an owned native place and offers direct
+location/search setup, not a temporary legacy preview or import card. Native
+Plans has no normal web handoff. Compatibility tooling remains dormant for
+recovery; retiring source files is separate from retiring runtime dependence.
+
+See [native cutover checkpoint](native-cutover-checkpoint.md) for the current
+implementation, test evidence, and remaining service/device gates. Release
+promotion remains separate from the Dev cutover.
+
 Baseline to preserve: web **3.0.408**, native **build 100**, repository commit `ccfbd80`. These identify the current implementation, not a declaration that every existing behavior is correct.
 
 ## Decision and outcome

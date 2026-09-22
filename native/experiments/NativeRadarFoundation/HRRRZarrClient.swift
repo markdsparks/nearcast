@@ -48,8 +48,8 @@ actor HRRRZarrClient {
     private let transport: RadarChunkClient
     private var busy = false
 
-    init() throws {
-        transport = try RadarChunkClient(allowedOrigins: [Contract.bucket])
+    init(configuration: URLSessionConfiguration = .ephemeral) throws {
+        transport = try RadarChunkClient(allowedOrigins: [Contract.bucket], configuration: configuration)
     }
 
     /// Discovers by bounded deterministic hourly candidates, newest first. A
@@ -107,24 +107,39 @@ actor HRRRZarrClient {
         guard timeChunks.count * descriptors.count <= 16 else { throw Failure.tooManyChunks }
         let plane = spec.chunks[1] * spec.chunks[2]
         var result: [Contract.Chunk] = []
-        for descriptor in descriptors {
-            var values = [Float](repeating: .nan, count: steps.count * plane)
-            for timeChunk in timeChunks {
-                try Task.checkCancellation()
-                let key = "\(timeChunk).\(descriptor.chunkY).\(descriptor.chunkX)"
-                let url = run.productRoot.appendingPathComponent("\(Contract.reflectivityPath)/\(key)")
-                let encoded = try await transport.fetchBytes(at: url, maximumBytes: spec.decodedBytes + 65_536)
-                let decoded = try spec.decode(encoded)
-                let numeric = try HRRRZarrCodec.floats(decoded, dtype: spec.dtype)
-                for (outputIndex, step) in steps.enumerated() where step.sourceIndex / spec.chunks[0] == timeChunk {
-                    let sourceStart = (step.sourceIndex % spec.chunks[0]) * plane
-                    guard sourceStart <= numeric.count - plane else { throw Failure.malformedChunk }
-                    values.replaceSubrange((outputIndex * plane)..<((outputIndex + 1) * plane),
-                                           with: numeric[sourceStart..<(sourceStart + plane)])
+        // Spatial chunks are independent. Two lanes match the transport cap;
+        // there is no unbounded fan-out or partially published forecast field.
+        for start in stride(from: 0, to: descriptors.count, by: 2) {
+            try Task.checkCancellation()
+            let batch = Array(descriptors[start..<min(descriptors.count, start + 2)].enumerated())
+            let chunks = try await withThrowingTaskGroup(of: (Int, Contract.Chunk).self) { group in
+                for (index, descriptor) in batch {
+                    group.addTask { [transport] in
+                        var values = [Float](repeating: .nan, count: steps.count * plane)
+                        for timeChunk in timeChunks {
+                            try Task.checkCancellation()
+                            let key = "\(timeChunk).\(descriptor.chunkY).\(descriptor.chunkX)"
+                            let url = run.productRoot.appendingPathComponent("\(Contract.reflectivityPath)/\(key)")
+                            let encoded = try await transport.fetchBytes(at: url, maximumBytes: spec.decodedBytes + 65_536)
+                            let decoded = try spec.decode(encoded)
+                            let numeric = try HRRRZarrCodec.floats(decoded, dtype: spec.dtype)
+                            for (outputIndex, step) in steps.enumerated() where step.sourceIndex / spec.chunks[0] == timeChunk {
+                                let sourceStart = (step.sourceIndex % spec.chunks[0]) * plane
+                                guard sourceStart <= numeric.count - plane else { throw Failure.malformedChunk }
+                                values.replaceSubrange((outputIndex * plane)..<((outputIndex + 1) * plane),
+                                                       with: numeric[sourceStart..<(sourceStart + plane)])
+                            }
+                        }
+                        try Task.checkCancellation()
+                        return (index, Contract.Chunk(descriptor: descriptor, width: spec.chunks[2], height: spec.chunks[1],
+                                                     steps: steps, values: values, fillValue: spec.fillValue))
+                    }
                 }
+                var loaded: [(Int, Contract.Chunk)] = []
+                for try await chunk in group { loaded.append(chunk) }
+                return loaded.sorted { $0.0 < $1.0 }.map(\.1)
             }
-            result.append(Contract.Chunk(descriptor: descriptor, width: spec.chunks[2], height: spec.chunks[1],
-                                         steps: steps, values: values, fillValue: spec.fillValue))
+            result += chunks
         }
         try Task.checkCancellation()
         return Field(loaded: loaded, steps: steps, chunks: result)
@@ -132,12 +147,23 @@ actor HRRRZarrClient {
 
     private func loadGrid(run: Contract.Run, projection: Contract.Projection) async throws -> Contract.Grid {
         var arrays: [String: [Double]] = [:]
-        for path in Contract.coordinatePaths {
+        for start in stride(from: 0, to: Contract.coordinatePaths.count, by: 2) {
             try Task.checkCancellation()
-            guard let spec = run.coordinates[path] else { throw Failure.invalidMetadata }
-            let encoded = try await transport.fetchBytes(at: run.productRoot.appendingPathComponent("\(path)/0"),
-                                                          maximumBytes: spec.decodedBytes + 65_536)
-            arrays[path] = try HRRRZarrCodec.numbers(spec.decode(encoded), dtype: spec.dtype)
+            let paths = Array(Contract.coordinatePaths[start..<min(Contract.coordinatePaths.count, start + 2)])
+            let values = try await withThrowingTaskGroup(of: (String, [Double]).self) { group in
+                for path in paths {
+                    guard let spec = run.coordinates[path] else { throw Failure.invalidMetadata }
+                    group.addTask { [transport] in
+                        let encoded = try await transport.fetchBytes(at: run.productRoot.appendingPathComponent("\(path)/0"),
+                                                                    maximumBytes: spec.decodedBytes + 65_536)
+                        return (path, try HRRRZarrCodec.numbers(spec.decode(encoded), dtype: spec.dtype))
+                    }
+                }
+                var loaded: [String: [Double]] = [:]
+                for try await (path, numbers) in group { loaded[path] = numbers }
+                return loaded
+            }
+            arrays.merge(values, uniquingKeysWith: { _, new in new })
         }
         return try Contract.Grid(run: run, projection: projection, arrays: arrays)
     }

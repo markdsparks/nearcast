@@ -44,6 +44,33 @@ private final class MockMRMSProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() { }
 }
 
+/// Offline controllable transport for cache concurrency/cancellation tests. Real
+/// GRIB validation remains covered by the client/URLProtocol integration above.
+private actor MockScanTransport {
+    private var pending: [UUID: CheckedContinuation<Data, Error>] = [:]
+    private(set) var starts = 0
+    private(set) var cancellations = 0
+    func fetch() async throws -> Data {
+        starts += 1
+        let id = UUID()
+        return try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { pending[id] = $0 }
+        }, onCancel: { Task { await self.cancel(id) } })
+    }
+    func resolve(_ result: Result<Data, Error>) {
+        let waiters = Array(pending.values)
+        pending.removeAll()
+        for waiter in waiters { waiter.resume(with: result) }
+    }
+    private func cancel(_ id: UUID) {
+        if let waiter = pending.removeValue(forKey: id) {
+            cancellations += 1
+            waiter.resume(throwing: CancellationError())
+        }
+    }
+}
+
 @main
 enum MRMSTests {
     static func digest(_ bytes: [UInt8]) -> String { SHA256.hash(data: Data(bytes)).map { String(format: "%02x", $0) }.joined() }
@@ -75,7 +102,137 @@ enum MRMSTests {
         Date(timeIntervalSince1970: Double(try RadarNumericContract.parseTime(string)) / 1000)
     }
 
+    static func waitFor(_ condition: @escaping @Sendable () async -> Bool) async throws {
+        for _ in 0..<200 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        preconditionFailure("Timed out waiting for offline cache test")
+    }
+
+    static func cacheTests() async throws {
+        func check(_ value: Bool, _ message: String = "Cache invariant failed") { precondition(value, message) }
+        func frame(_ minute: Int, count: Int = 32) throws -> MRMSContract.AdvertisedFrame {
+            try .init(key: String(format: "CONUS/MergedReflectivityQCComposite_00.50/20260919/MRMS_MergedReflectivityQCComposite_00.50_20260919-00%02d41.grib2.gz", minute), byteLength: count)
+        }
+        let a = try frame(0), b = try frame(2), c = try frame(4)
+        let bytes = Data([0x1f, 0x8b] + [UInt8](repeating: 7, count: 30))
+        let cache = MRMSScanCache(maximumBytes: 64, maximumScans: 2)
+        let transport = MockScanTransport()
+        let first = Task { try await cache.acquire(a) { try await transport.fetch() } }
+        let second = Task { try await cache.acquire(a) { try await transport.fetch() } }
+        try await waitFor {
+            let snapshot = await cache.snapshot(), starts = await transport.starts
+            return snapshot.consumers == 2 && starts == 1
+        }
+        first.cancel()
+        do { _ = try await first.value; preconditionFailure("Canceled coalesced consumer succeeded") } catch is CancellationError { }
+        check(await transport.cancellations == 0, "Canceling one consumer canceled the shared source")
+        await transport.resolve(.success(bytes))
+        let retained = try await second.value
+        precondition(retained.data == bytes)
+        // Until a consumer validates the GRIB, there are no completed cache hits.
+        check(await cache.snapshot().cachedScans == 0)
+        await cache.release(retained, validated: true)
+        let hit = try await cache.acquire(a) { preconditionFailure("Validated scan downloaded twice") }
+        precondition(hit.data == bytes)
+        await cache.release(hit, validated: true)
+        check(await cache.snapshot().inFlightScans == 0)
+
+        let abandoned = Task { try await cache.acquire(b) { try await transport.fetch() } }
+        try await waitFor { await transport.starts == 2 }
+        abandoned.cancel()
+        do { _ = try await abandoned.value; preconditionFailure("Last consumer failed to cancel") } catch is CancellationError { }
+        try await waitFor {
+            let snapshot = await cache.snapshot(), cancellations = await transport.cancellations
+            return snapshot.inFlightScans == 0 && cancellations == 1
+        }
+        let retry = Task { try await cache.acquire(b) { try await transport.fetch() } }
+        try await waitFor { await transport.starts == 3 }
+        await transport.resolve(.success(bytes))
+        let retryLease = try await retry.value
+        await cache.release(retryLease, validated: false)
+        let beforeRetry = await transport.starts
+        let failedDecodeRetry = try await cache.acquire(b) { bytes }
+        await cache.release(failedDecodeRetry, validated: false)
+        check(await cache.snapshot().cachedScans == 1, "Failed decode cached an unvalidated source")
+        check(await transport.starts == beforeRetry)
+
+        // A failed transfer, short body, or non-gzip body can never be retained.
+        do {
+            _ = try await cache.acquire(b) { throw RadarChunkContract.Failure.transport }
+            preconditionFailure("Failed transfer succeeded")
+        } catch RadarChunkContract.Failure.transport { }
+        do {
+            _ = try await cache.acquire(b) { bytes.dropLast() }
+            preconditionFailure("Partial transfer succeeded")
+        } catch MRMSContract.Failure.sizeLimit { }
+        do {
+            _ = try await cache.acquire(b) { Data(repeating: 0, count: 32) }
+            preconditionFailure("Non-gzip transfer succeeded")
+        } catch MRMSContract.Failure.invalidCompression { }
+        check(await cache.snapshot().inFlightScans == 0)
+
+        // LRU and exact advertised-size identity, without any credentials or a
+        // generic URL cache. Marking validated is the MRMSClient's responsibility.
+        let bLease = try await cache.acquire(b) { bytes }; await cache.release(bLease, validated: true)
+        _ = try await cache.acquire(a) { preconditionFailure("Expected a cache hit") }
+        let cLease = try await cache.acquire(c) { bytes }; await cache.release(cLease, validated: true)
+        let full = await cache.snapshot()
+        precondition(full.cachedBytes == 64 && full.cachedScans == 2)
+        _ = try await cache.acquire(a) { preconditionFailure("LRU evicted recently accessed scan") }
+        let bAgain = try await cache.acquire(b) { bytes }; await cache.release(bAgain, validated: false)
+        let changed = try frame(0, count: 33), changedBytes = bytes + Data([1])
+        let changedLease = try await cache.acquire(changed) { changedBytes }
+        precondition(changedLease.data.count == 33, "Changed descriptor reused another byte length")
+        await cache.release(changedLease, validated: true)
+        check(await cache.snapshot().cachedBytes <= 64)
+
+        // Resource caps apply to pending source work as well as completed scans.
+        await cache.removeAll()
+        let heldA = Task { try await cache.acquire(a) { try await transport.fetch() } }
+        let heldB = Task { try await cache.acquire(b) { try await transport.fetch() } }
+        try await waitFor { await cache.snapshot().inFlightScans == 2 }
+        do {
+            _ = try await cache.acquire(c) { bytes }
+            preconditionFailure("Unbounded source downloads")
+        } catch MRMSContract.Failure.requestLimit { }
+        heldA.cancel(); heldB.cancel()
+        for task in [heldA, heldB] { do { _ = try await task.value; preconditionFailure("Canceled held source succeeded") } catch is CancellationError { } }
+        try await waitFor { await cache.snapshot().inFlightScans == 0 }
+        for _ in 0..<20 {
+            let task = Task { try await cache.acquire(a) { try await transport.fetch() } }
+            task.cancel()
+            do { _ = try await task.value; preconditionFailure("Immediate cancellation ignored") } catch is CancellationError { }
+        }
+        try await waitFor { await cache.snapshot().inFlightScans == 0 }
+
+        let pressure = MRMSScanCache()
+        let beforePressure = await transport.starts
+        let pressureTask = Task { try await pressure.acquire(a) { try await transport.fetch() } }
+        try await waitFor { await transport.starts == beforePressure + 1 }
+        await pressure.removeAll()
+        await transport.resolve(.success(bytes))
+        let lateLease = try await pressureTask.value
+        await pressure.release(lateLease, validated: true)
+        check(await pressure.snapshot().cachedScans == 0, "Pre-pressure work repopulated the MRMS cache")
+        let postPressure = try await pressure.acquire(a) { bytes }
+        await pressure.release(postPressure, validated: true)
+        check(await pressure.snapshot().cachedScans == 1, "Post-pressure work failed to cache")
+
+        let expiring = MRMSScanCache(maximumAge: 0.02)
+        let expiringLease = try await expiring.acquire(a) { bytes }
+        await expiring.release(expiringLease, validated: true)
+        try await Task.sleep(for: .milliseconds(30))
+        check(await expiring.snapshot().cachedScans == 0, "Expired source retained")
+        let disabled = MRMSScanCache(maximumBytes: 0)
+        let uncached = try await disabled.acquire(a) { bytes }; await disabled.release(uncached, validated: true)
+        check(await disabled.snapshot().cachedBytes == 0)
+        print("PASS MRMS source cache: coalesced acquisition, independent cancellation, last-consumer cancellation/retry, validated-only retention, short/failed transfers, advertised identity, LRU byte/count caps, bounded pending work and expiry")
+    }
+
     static func main() async throws {
+        try await cacheTests()
         let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: root.appendingPathComponent("scripts/fixtures/native-radar/mrms-contract.json")))
         for vector in fixture.vectors {
@@ -165,7 +322,8 @@ enum MRMSTests {
 
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockMRMSProtocol.self]
         config.httpAdditionalHeaders = ["Authorization": "test-only-must-be-removed", "Cookie": "test-only-must-be-removed"]
-        let client = try MRMSClient(configuration: config)
+        let scanCache = MRMSScanCache()
+        let client = try MRMSClient(configuration: config, scanCache: scanCache)
         for listing in fixture.listings { MockMRMSProtocol.store.set(listing.prefix, .init(data: Data(listing.xml.utf8))) }
         let history = try await client.listRecentFrames(now: date("2026-09-19T00:07:45Z"), historyMinutes: 20, maximumFrames: 3)
         precondition(history.map(\.key) == fixture.selectionCases[0].expectedKeys)
@@ -175,23 +333,63 @@ enum MRMSTests {
         MockMRMSProtocol.store.set("/" + frame.key, .init(data: bytes))
         let loaded = try await client.decodeFrame(frame, bounds: vector.bounds, width: 64, height: 64)
         precondition(digest(loaded.texture.bytes) == vector.textureSHA256)
+        let afterFirstViewport = MockMRMSProtocol.store.requestCount()
+        let anotherClient = try MRMSClient(configuration: config, scanCache: scanCache)
+        _ = try await anotherClient.decodeFrame(frame, bounds: vector.bounds, width: 128, height: 128)
+        precondition(MockMRMSProtocol.store.requestCount() == afterFirstViewport, "A second viewport/client redownloaded the same national scan")
+        let invalidCache = MRMSScanCache()
+        let invalidClient = try MRMSClient(configuration: config, scanCache: invalidCache)
+        let beforeInvalid = MockMRMSProtocol.store.requestCount()
+        MockMRMSProtocol.store.set("/" + frame.key, .init(data: badCRC))
+        for _ in 0..<2 {
+            do {
+                _ = try await invalidClient.decodeFrame(frame, bounds: vector.bounds, width: 64, height: 64)
+                preconditionFailure("Invalid compressed scan decoded")
+            } catch MRMSContract.Failure.invalidCompression { }
+        }
+        let invalidSnapshot = await invalidCache.snapshot()
+        precondition(invalidSnapshot.cachedBytes == 0 && invalidSnapshot.inFlightScans == 0)
+        precondition(MockMRMSProtocol.store.requestCount() == beforeInvalid + 2, "Failed decoding source entered the cache")
+        MockMRMSProtocol.store.set("/" + frame.key, .init(data: bytes))
         let loopingXML = listing.xml.replacingOccurrences(of: "<IsTruncated>false</IsTruncated>", with: "<IsTruncated>true</IsTruncated><NextContinuationToken>repeat</NextContinuationToken>")
         MockMRMSProtocol.store.set(listing.prefix, .init(data: Data(loopingXML.utf8)))
         do { _ = try await client.listRecentFrames(now: date("2026-09-19T00:07:45Z")); preconditionFailure("Looping listing accepted") }
         catch { precondition(error as? MRMSContract.Failure == .listingLimit) }
+        await scanCache.removeAll()
         MockMRMSProtocol.store.set("/" + frame.key, .init(data: bytes, hold: true))
         let initialRequests = MockMRMSProtocol.store.requestCount()
         let first = Task { try await client.decodeFrame(frame, bounds: vector.bounds, width: 64, height: 64) }
         let second = Task { try await client.decodeFrame(frame, bounds: vector.bounds, width: 64, height: 64) }
-        for _ in 0..<200 where MockMRMSProtocol.store.requestCount() < initialRequests + 2 { try await Task.sleep(for: .milliseconds(5)) }
-        precondition(MockMRMSProtocol.store.requestCount() == initialRequests + 2)
+        for _ in 0..<200 {
+            if await scanCache.snapshot().consumers == 2 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        precondition(MockMRMSProtocol.store.requestCount() == initialRequests + 1, "Concurrent viewports did not coalesce")
         do { _ = try await client.decodeFrame(frame, bounds: vector.bounds); preconditionFailure("Unbounded decode admission") }
         catch { precondition(error as? MRMSContract.Failure == .requestLimit) }
         first.cancel(); second.cancel()
         for task in [first, second] { do { _ = try await task.value; preconditionFailure("Held request did not cancel") } catch { } }
         MockMRMSProtocol.store.set("/" + frame.key, .init(data: bytes))
         _ = try await client.decodeFrame(frame, bounds: vector.bounds, width: 64, height: 64)
-        print("PASS Native MRMS: exact browser viewport bytes, five PNG filters, both scan directions, Mercator alignment, missing-data mask, source/key time binding, malformed GRIB/PNG/gzip rejection, XML/URL limits, selection parity, future exclusion, bounded client and cancellation recovery")
+
+        // The new frame scheduler can hold both source slots while refreshing
+        // discovery. Metadata has an independent bounded transport lane.
+        let isolatedClient = try MRMSClient(configuration: config, scanCache: MRMSScanCache())
+        let otherFrame = allFrames.first(where: { $0.key != frame.key })!
+        MockMRMSProtocol.store.set("/" + frame.key, .init(data: bytes, hold: true))
+        MockMRMSProtocol.store.set("/" + otherFrame.key, .init(data: Data(), hold: true))
+        for listing in fixture.listings { MockMRMSProtocol.store.set(listing.prefix, .init(data: Data(listing.xml.utf8))) }
+        let beforeTwo = MockMRMSProtocol.store.requestCount()
+        let download1 = Task { try await isolatedClient.decodeFrame(frame, bounds: vector.bounds, width: 64, height: 64) }
+        let download2 = Task { try await isolatedClient.decodeFrame(otherFrame, bounds: vector.bounds, width: 64, height: 64) }
+        try await waitFor { MockMRMSProtocol.store.requestCount() == beforeTwo + 2 }
+        let whileBusy = try await isolatedClient.listRecentFrames(now: date("2026-09-19T00:07:45Z"), historyMinutes: 20, maximumFrames: 3)
+        precondition(whileBusy.map(\.key) == fixture.selectionCases[0].expectedKeys, "Two frame transfers blocked listing refresh")
+        download1.cancel(); download2.cancel()
+        for task in [download1, download2] {
+            do { _ = try await task.value; preconditionFailure("Held isolated download ignored cancellation") } catch is CancellationError { }
+        }
+        print("PASS Native MRMS: exact browser viewport bytes, five PNG filters, both scan directions, Mercator alignment, missing-data mask, source/key time binding, malformed GRIB/PNG/gzip rejection, XML/URL limits, selection parity, future exclusion, bounded client, shared viewport downloads and cancellation recovery")
 
         if CommandLine.arguments.contains("--live") {
             let client = try MRMSClient()

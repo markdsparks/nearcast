@@ -64,3 +64,6 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/NearcastDerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Verify native Release boundary and unsigned simulator build
+        run: bash scripts/test-native-release-cutover-gate.sh --build

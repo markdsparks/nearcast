@@ -3,6 +3,14 @@ import SwiftUI
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var model: NearcastWebModel
+    /// Compatibility handoffs must stay in the requested existing-app route;
+    /// do not immediately cover them with the native Home preview again.
+    let automaticallyOpenNativeHome: Bool
+
+    init(model: NearcastWebModel, automaticallyOpenNativeHome: Bool = true) {
+        self.model = model
+        self.automaticallyOpenNativeHome = automaticallyOpenNativeHome
+    }
 
     #if DEBUG
     @State private var showingDiagnostics = false
@@ -16,6 +24,12 @@ struct ContentView: View {
             if shouldShowStartupOverlay {
                 startupOverlay
                     .transition(.opacity)
+            }
+
+            if model.isOpeningAssistant {
+                ProgressView("Opening your conversation…")
+                    .padding(20)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
             }
 
             #if DEBUG
@@ -36,7 +50,10 @@ struct ContentView: View {
             guard newPhase == .active else { return }
             model.recoverIfNeededOnActivation()
         }
-        .task { model.openNativeHomeIfAvailable() }
+        .task {
+            guard automaticallyOpenNativeHome else { return }
+            model.openNativeHomeIfAvailable()
+        }
         .fullScreenCover(isPresented: $model.showingNativePreview) {
             if let context = model.nativePreviewContext {
                 NativeWeatherPreviewContainer(context: context, webModel: model)
@@ -56,6 +73,9 @@ struct ContentView: View {
             get: { model.nativePreviewError != nil },
             set: { if !$0 { model.nativePreviewError = nil } }
         )) {
+            if model.canRetryPreviewHandoff {
+                Button("Try again") { model.retryPreviewHandoff() }
+            }
             Button("OK") { model.nativePreviewError = nil }
         } message: {
             Text(model.nativePreviewError ?? "")
@@ -220,7 +240,11 @@ private struct NativeWeatherPreviewContainer: View {
             },
             onSelectPlace: placesControls.source == nil ? nil : { place in
                 await selectVerifiedPlace(place)
-            }
+            },
+            // A sheet does not necessarily deactivate or disappear the view
+            // below it. Explicitly pause sky motion for ancestor presentations.
+            isUncovered: placesSettingsTab == nil && webModel.showingNativePreview
+                && webModel.nativePreviewError == nil
         )
         .sheet(item: $placesSettingsTab) { tab in
             NativePlacesSettingsSheet(model: placesControls, initialTab: tab,

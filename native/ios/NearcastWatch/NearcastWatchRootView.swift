@@ -180,6 +180,8 @@ struct NearcastWatchRootView: View {
             syncState = .locationUnavailable
         case .failed:
             guard !Task.isCancelled else { return }
+            applySnapshot(watchSnapshotForDisplay(NearcastWidgetSnapshot.current()))
+            WidgetCenter.shared.reloadAllTimelines()
             syncState = .failed
         }
     }
@@ -2764,6 +2766,17 @@ enum NearcastWatchWeatherClient {
             allowsLocationAuthorizationRequest: allowsLocationAuthorizationRequest
         ) else { return .locationUnavailable }
         let place = resolution.requestPlace
+        let location = NearcastCompanionLocation(latitude: place.latitude,
+            longitude: place.longitude, resolvedAt: Date().timeIntervalSince1970)
+        guard let publication = NearcastWidgetSnapshotStore.storedPublication(),
+              let currentPlace = publication.place,
+              sameSelection(selectedPlace, currentPlace) else {
+            return .success(NearcastWidgetSnapshot.current())
+        }
+        let prepared = publication.snapshot.preparingWeather(at: location, selected: selectedPlace)
+        if selectedPlace.tracksCurrentLocation {
+            _ = NearcastWidgetSnapshotStore.saveRefreshResult(prepared)
+        }
 
         var components = URLComponents(string: "https://getnearcast.app/api/forecast")
         let metric = fallback.windUnit.lowercased().contains("km")
@@ -2808,6 +2821,8 @@ enum NearcastWatchWeatherClient {
             // A phone sync may have landed while the request was in flight. Merge
             // weather into the newest stored snapshot so its plan is not replaced.
             var updated = NearcastWidgetSnapshot.stored() ?? fallback
+            if let newer = updated.weatherLocation, newer.resolvedAt > location.resolvedAt,
+               !newer.matches(location) { return .success(updated) }
             guard NearcastSharedForecastClock.unitsMatch(updated.windUnit, requestedMetric: metric) else {
                 return .success(updated)
             }
@@ -2821,6 +2836,9 @@ enum NearcastWatchWeatherClient {
                 cloudCover: current.cloudCover
             ) ?? current.weatherCode
             updated.version = max(9, max(updated.version, fallback.version))
+            updated = updated.preparingWeather(at: location, selected: selectedPlace)
+            updated.weatherLocation = location
+            updated.nativeWeatherInvalidation = false
             updated.placeName = place.displayLabel
             updated.placeTimezone = forecast.timezone ?? updated.placeTimezone
             updated.temperature = Int(current.temperature.rounded())
@@ -2861,9 +2879,9 @@ enum NearcastWatchWeatherClient {
                     rows[0].isDay = updated.isDay
                 }
                 updated.timeline = rows
-                updated.rainChance = rows.first?.rainChance ?? fallback.rainChance
+                updated.rainChance = rows.first?.rainChance ?? updated.rainChance
                 updated.forecastRainChance = rows.first?.rainChance
-                updated.uv = rows.first?.uv ?? fallback.uv
+                updated.uv = rows.first?.uv ?? updated.uv
             }
             if let daily = forecast.daily {
                 // Keep one rollover day beyond the three visible rows so a
@@ -2906,13 +2924,16 @@ enum NearcastWatchWeatherClient {
             allowsAuthorizationRequest: allowsLocationAuthorizationRequest
         ) else { return nil }
 
-        let oldLocation = CLLocation(latitude: selected.latitude, longitude: selected.longitude)
+        let cachedLocation = NearcastWidgetSnapshot.stored()?.weatherLocation
+        let oldLocation = CLLocation(latitude: cachedLocation?.latitude ?? selected.latitude,
+                                     longitude: cachedLocation?.longitude ?? selected.longitude)
         let distance = location.distance(from: oldLocation)
         let movementThreshold = max(2_000, location.horizontalAccuracy * 1.5)
         var requestPlace = selected
         requestPlace.latitude = location.coordinate.latitude
         requestPlace.longitude = location.coordinate.longitude
-        if distance >= movementThreshold {
+        let anchorDistance = location.distance(from: CLLocation(latitude: selected.latitude, longitude: selected.longitude))
+        if anchorDistance >= movementThreshold {
             // Avoid labeling weather from a new coordinate with the previous
             // city; reverse geocoding would make a background wake less reliable.
             requestPlace.name = "Current Location"

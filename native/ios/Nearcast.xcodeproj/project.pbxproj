@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F93100000000000000000001 /* NativeRadarPreviewSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F93200000000000000000001 /* NativeRadarPreviewSnapshotTests.swift */; };
+		F93100000000000000000002 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000004 /* MapLibre */; };
+		AB1000000000000000000050 /* NativePlanNotificationContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2000000000000000000050; };
+		AB1000000000000000000051 /* NativePlanNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2000000000000000000051; };
+		AB1000000000000000000052 /* NativeAskSpeechController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2000000000000000000052; };
+		AB1000000000000000000053 /* NativeCompanionContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2000000000000000000053; };
+		AB1000000000000000000054 /* NativeLiveActivityControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2000000000000000000054; };
+		AB1000000000000000000055 /* NativeStormCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB2000000000000000000055; };
 		AC1000000000000000000029 /* NativeRadarSeamEstimation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000029 /* NativeRadarSeamEstimation.swift */; };
 		AC100000000000000000002A /* NativeRadarSeamGates.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000002A /* NativeRadarSeamGates.swift */; };
 		AC100000000000000000002B /* NativeRadarTransition.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000002B /* NativeRadarTransition.swift */; };
@@ -30,6 +38,11 @@
 		AC1000000000000000000017 /* NativeRadarMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000017 /* NativeRadarMap.swift */; };
 		AC1000000000000000000018 /* NativeRadarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000018 /* NativeRadarModel.swift */; };
 		AC1000000000000000000019 /* NativeRadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000019 /* NativeRadarView.swift */; };
+		F923ECDE8D714733BE620001 /* NativeRadarOpeningContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = B72000000000000000000001 /* NativeRadarOpeningContext.swift */; };
+		B71000000000000000000002 /* NativeRadarObservedRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B72000000000000000000002 /* NativeRadarObservedRepository.swift */; };
+		B71000000000000000000003 /* NativeRadarPreviewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B72000000000000000000003 /* NativeRadarPreviewModel.swift */; };
+		B71000000000000000000004 /* NativeRadarPreviewCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B72000000000000000000004 /* NativeRadarPreviewCard.swift */; };
+		B71000000000000000000005 /* NativeRadarPreviewSnapshotter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B72000000000000000000005 /* NativeRadarPreviewSnapshotter.swift */; };
 		AC100000000000000000001A /* MRMSContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000001A /* MRMSContract.swift */; };
 		AC100000000000000000001B /* MRMSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC200000000000000000001B /* MRMSClient.swift */; };
 		AC1000000000000000000001 /* RadarTimelineContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2000000000000000000001 /* RadarTimelineContract.swift */; };
@@ -50,6 +63,25 @@
 		AA1000000000000000000013 /* NativePlacesOwnerBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000013 /* NativePlacesOwnerBridge.swift */; };
 		AA1000000000000000000014 /* NativeSnapshotPublicationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000014 /* NativeSnapshotPublicationCoordinator.swift */; };
 		AA1000000000000000000015 /* NativeAtmosphericField.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000015 /* NativeAtmosphericField.swift */; };
+		AA1000000000000000000016 /* NativeLivingSkyScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000016 /* NativeLivingSkyScene.swift */; };
+		AA1000000000000000000018 /* NativeLivingSkyMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000018 /* NativeLivingSkyMotion.swift */; };
+		AA1000000000000000000019 /* NativeLivingSkyCloudMotionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000019 /* NativeLivingSkyCloudMotionView.swift */; };
+		AA100000000000000000001A /* NativeLivingSkyRainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000001A /* NativeLivingSkyRainView.swift */; };
+		AA1000000000000000000040 /* NativeSkyStars.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000040 /* NativeSkyStars.swift */; };
+		AA1000000000000000000041 /* NativeLivingSkyStarsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000041 /* NativeLivingSkyStarsView.swift */; };
+		AA100000000000000000001B /* NativeAppRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000001B /* NativeAppRouter.swift */; };
+		AA100000000000000000001C /* NativeOnlyExperienceRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000001C /* NativeOnlyExperienceRoot.swift */; };
+		AA100000000000000000001D /* NativeAgendaRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000001D /* NativeAgendaRepository.swift */; };
+		AA100000000000000000001E /* NativeAgendaStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000001E /* NativeAgendaStore.swift */; };
+		AA100000000000000000001F /* NativeAgendaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA200000000000000000001F /* NativeAgendaView.swift */; };
+		AA1000000000000000000020 /* NativePlanEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000020 /* NativePlanEvidence.swift */; };
+		AA1000000000000000000021 /* NativePlanEvidenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000021 /* NativePlanEvidenceModel.swift */; };
+		AA1000000000000000000022 /* NativePlanDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000022 /* NativePlanDetailView.swift */; };
+		AA1000000000000000000023 /* NativePlanMigrationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000023 /* NativePlanMigrationStore.swift */; };
+		AA1000000000000000000024 /* NativeAskRead.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000024 /* NativeAskRead.swift */; };
+		AA1000000000000000000025 /* NativeDayRhythmPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000025 /* NativeDayRhythmPresentation.swift */; };
+		AA1000000000000000000026 /* NativeDayRhythmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000026 /* NativeDayRhythmView.swift */; };
+		AA1000000000000000000017 /* NativeLivingSkyBackdrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000017 /* NativeLivingSkyBackdrop.swift */; };
 		AA1000000000000000000001 /* NativeWeatherPreviewContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000001 /* NativeWeatherPreviewContext.swift */; };
 		AA1000000000000000000002 /* NativeWeatherPreviewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000002 /* NativeWeatherPreviewModel.swift */; };
 		AA1000000000000000000003 /* NativeWeatherForecast.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA2000000000000000000003 /* NativeWeatherForecast.swift */; };
@@ -87,6 +119,8 @@
 		A10000000000000000000010 /* OperonCoreDriver in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000001 /* OperonCoreDriver */; };
 		A10000000000000000000011 /* OperonFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000002 /* OperonFoundationModels */; };
 		A10000000000000000000012 /* OperonSQLite in Frameworks */ = {isa = PBXBuildFile; productRef = F20000000000000000000003 /* OperonSQLite */; };
+		A10000000000000000000013 /* SunCalc-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* SunCalc-LICENSE.txt */; };
+		AF1000000000000000000001 /* NativeAgendaExport.js in Resources */ = {isa = PBXBuildFile; fileRef = AF2000000000000000000001 /* NativeAgendaExport.js */; };
 		B10000000000000000000001 /* NearcastWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* NearcastWidget.swift */; };
 		B10000000000000000000002 /* NearcastWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* NearcastWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C10000000000000000000001 /* NearcastStormActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* NearcastStormActivityAttributes.swift */; };
@@ -108,9 +142,27 @@
 		E10000000000000000000002 /* NearcastWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* NearcastWidgetSnapshot.swift */; };
 		E10000000000000000000003 /* NearcastWatchComplications.appex in Embed Watch Extensions */ = {isa = PBXBuildFile; fileRef = E20000000000000000000004 /* NearcastWatchComplications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E10000000000000000000004 /* NearcastWatchVisualSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000003 /* NearcastWatchVisualSignal.swift */; };
+		AF1100000000000000000001 /* NativePlanLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000001 /* NativePlanLibrary.swift */; };
+		AF1100000000000000000002 /* NativePlansExperience.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000002 /* NativePlansExperience.swift */; };
+		AF1100000000000000000003 /* NativeAskConversation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000003 /* NativeAskConversation.swift */; };
+		AF1100000000000000000004 /* NativeAskExperience.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000004 /* NativeAskExperience.swift */; };
+		AF1100000000000000000005 /* NativePlanWeatherRead.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000005 /* NativePlanWeatherRead.swift */; };
+		AF1100000000000000000006 /* NativePlanNotificationIntentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000006 /* NativePlanNotificationIntentStore.swift */; };
+		AF1100000000000000000007 /* NativePlanNotificationIntentHandoffCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000007 /* NativePlanNotificationIntentHandoffCoordinator.swift */; };
+		AF1100000000000000000008 /* NativePlanNotificationIntentStagingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000008 /* NativePlanNotificationIntentStagingCoordinator.swift */; };
+		AF1100000000000000000009 /* NativeLegacySourceScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2100000000000000000009 /* NativeLegacySourceScope.swift */; };
+		AF110000000000000000000A /* NativePlanDeliveryTransferDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF210000000000000000000A /* NativePlanDeliveryTransferDraft.swift */; };
+		AF110000000000000000000B /* NativePlanDeliveryTransferReviewCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF210000000000000000000B /* NativePlanDeliveryTransferReviewCoordinator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		F93800000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A80000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = Nearcast;
+		};
 		B80000000000000000000002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A80000000000000000000001 /* Project object */;
@@ -171,6 +223,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F93200000000000000000001 /* NativeRadarPreviewSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRadarPreviewSnapshotTests.swift; sourceTree = "<group>"; };
+		F93200000000000000000002 /* NearcastTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NearcastTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB2000000000000000000050 /* NativePlanNotificationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanNotificationContract.swift; sourceTree = "<group>"; };
+		AB2000000000000000000051 /* NativePlanNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanNotifications.swift; sourceTree = "<group>"; };
+		AB2000000000000000000052 /* NativeAskSpeechController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAskSpeechController.swift; sourceTree = "<group>"; };
+		AB2000000000000000000053 /* NativeCompanionContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCompanionContent.swift; sourceTree = "<group>"; };
+		AB2000000000000000000054 /* NativeLiveActivityControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLiveActivityControls.swift; sourceTree = "<group>"; };
+		AB2000000000000000000055 /* NativeStormCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeStormCheck.swift; path = ../experiments/NativeRadarFoundation/NativeStormCheck.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000029 /* NativeRadarSeamEstimation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarSeamEstimation.swift; path = ../experiments/NativeRadarFoundation/NativeRadarSeamEstimation.swift; sourceTree = SOURCE_ROOT; };
 		AC200000000000000000002A /* NativeRadarSeamGates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarSeamGates.swift; path = ../experiments/NativeRadarFoundation/NativeRadarSeamGates.swift; sourceTree = SOURCE_ROOT; };
 		AC200000000000000000002B /* NativeRadarTransition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarTransition.swift; path = ../experiments/NativeRadarFoundation/NativeRadarTransition.swift; sourceTree = SOURCE_ROOT; };
@@ -194,6 +254,11 @@
 		AC2000000000000000000017 /* NativeRadarMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarMap.swift; path = NearcastApp/NativeWeather/NativeRadarMap.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000018 /* NativeRadarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarModel.swift; path = NearcastApp/NativeWeather/NativeRadarModel.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000019 /* NativeRadarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarView.swift; path = NearcastApp/NativeWeather/NativeRadarView.swift; sourceTree = SOURCE_ROOT; };
+		B72000000000000000000001 /* NativeRadarOpeningContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarOpeningContext.swift; path = NearcastApp/NativeWeather/NativeRadarOpeningContext.swift; sourceTree = SOURCE_ROOT; };
+		B72000000000000000000002 /* NativeRadarObservedRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarObservedRepository.swift; path = NearcastApp/NativeWeather/NativeRadarObservedRepository.swift; sourceTree = SOURCE_ROOT; };
+		B72000000000000000000003 /* NativeRadarPreviewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarPreviewModel.swift; path = NearcastApp/NativeWeather/NativeRadarPreviewModel.swift; sourceTree = SOURCE_ROOT; };
+		B72000000000000000000004 /* NativeRadarPreviewCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarPreviewCard.swift; path = NearcastApp/NativeWeather/NativeRadarPreviewCard.swift; sourceTree = SOURCE_ROOT; };
+		B72000000000000000000005 /* NativeRadarPreviewSnapshotter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeRadarPreviewSnapshotter.swift; path = NearcastApp/NativeWeather/NativeRadarPreviewSnapshotter.swift; sourceTree = SOURCE_ROOT; };
 		AC200000000000000000001A /* MRMSContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MRMSContract.swift; path = ../experiments/NativeRadarFoundation/MRMSContract.swift; sourceTree = SOURCE_ROOT; };
 		AC200000000000000000001B /* MRMSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MRMSClient.swift; path = ../experiments/NativeRadarFoundation/MRMSClient.swift; sourceTree = SOURCE_ROOT; };
 		AC2000000000000000000001 /* RadarTimelineContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RadarTimelineContract.swift; path = ../experiments/NativeRadarFoundation/RadarTimelineContract.swift; sourceTree = SOURCE_ROOT; };
@@ -213,6 +278,25 @@
 		AA2000000000000000000013 /* NativePlacesOwnerBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlacesOwnerBridge.swift; sourceTree = "<group>"; };
 		AA2000000000000000000014 /* NativeSnapshotPublicationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSnapshotPublicationCoordinator.swift; sourceTree = "<group>"; };
 		AA2000000000000000000015 /* NativeAtmosphericField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAtmosphericField.swift; sourceTree = "<group>"; };
+		AA2000000000000000000016 /* NativeLivingSkyScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLivingSkyScene.swift; sourceTree = "<group>"; };
+		AA2000000000000000000018 /* NativeLivingSkyMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLivingSkyMotion.swift; sourceTree = "<group>"; };
+		AA2000000000000000000019 /* NativeLivingSkyCloudMotionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLivingSkyCloudMotionView.swift; sourceTree = "<group>"; };
+		AA200000000000000000001A /* NativeLivingSkyRainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLivingSkyRainView.swift; sourceTree = "<group>"; };
+		AA2000000000000000000040 /* NativeSkyStars.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSkyStars.swift; sourceTree = "<group>"; };
+		AA2000000000000000000041 /* NativeLivingSkyStarsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLivingSkyStarsView.swift; sourceTree = "<group>"; };
+		AA200000000000000000001B /* NativeAppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAppRouter.swift; sourceTree = "<group>"; };
+		AA200000000000000000001C /* NativeOnlyExperienceRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeOnlyExperienceRoot.swift; sourceTree = "<group>"; };
+		AA200000000000000000001D /* NativeAgendaRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgendaRepository.swift; sourceTree = "<group>"; };
+		AA200000000000000000001E /* NativeAgendaStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgendaStore.swift; sourceTree = "<group>"; };
+		AA200000000000000000001F /* NativeAgendaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAgendaView.swift; sourceTree = "<group>"; };
+		AA2000000000000000000020 /* NativePlanEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanEvidence.swift; sourceTree = "<group>"; };
+		AA2000000000000000000021 /* NativePlanEvidenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanEvidenceModel.swift; sourceTree = "<group>"; };
+		AA2000000000000000000022 /* NativePlanDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanDetailView.swift; sourceTree = "<group>"; };
+		AA2000000000000000000023 /* NativePlanMigrationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanMigrationStore.swift; sourceTree = "<group>"; };
+		AA2000000000000000000024 /* NativeAskRead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAskRead.swift; sourceTree = "<group>"; };
+		AA2000000000000000000025 /* NativeDayRhythmPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDayRhythmPresentation.swift; sourceTree = "<group>"; };
+		AA2000000000000000000026 /* NativeDayRhythmView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDayRhythmView.swift; sourceTree = "<group>"; };
+		AA2000000000000000000017 /* NativeLivingSkyBackdrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLivingSkyBackdrop.swift; sourceTree = "<group>"; };
 		AA2000000000000000000001 /* NativeWeatherPreviewContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWeatherPreviewContext.swift; sourceTree = "<group>"; };
 		AA2000000000000000000002 /* NativeWeatherPreviewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWeatherPreviewModel.swift; sourceTree = "<group>"; };
 		AA2000000000000000000003 /* NativeWeatherForecast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWeatherForecast.swift; sourceTree = "<group>"; };
@@ -249,6 +333,8 @@
 		A20000000000000000000012 /* NativeWatchSnapshotSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWatchSnapshotSync.swift; sourceTree = "<group>"; };
 		A20000000000000000000013 /* NativeLanguageModelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLanguageModelController.swift; sourceTree = "<group>"; };
 		A20000000000000000000014 /* NativeOperonController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeOperonController.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* SunCalc-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "SunCalc-LICENSE.txt"; sourceTree = "<group>"; };
+		AF2000000000000000000001 /* NativeAgendaExport.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = NativeAgendaExport.js; sourceTree = "<group>"; };
 		B20000000000000000000001 /* NearcastWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearcastWidget.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20000000000000000000003 /* NearcastWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NearcastWidget.entitlements; sourceTree = "<group>"; };
@@ -267,9 +353,26 @@
 		E20000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E20000000000000000000003 /* NearcastWatchComplications.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NearcastWatchComplications.entitlements; sourceTree = "<group>"; };
 		E20000000000000000000004 /* NearcastWatchComplications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NearcastWatchComplications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF2100000000000000000001 /* NativePlanLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanLibrary.swift; sourceTree = "<group>"; };
+		AF2100000000000000000002 /* NativePlansExperience.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlansExperience.swift; sourceTree = "<group>"; };
+		AF2100000000000000000003 /* NativeAskConversation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAskConversation.swift; sourceTree = "<group>"; };
+		AF2100000000000000000004 /* NativeAskExperience.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAskExperience.swift; sourceTree = "<group>"; };
+		AF2100000000000000000005 /* NativePlanWeatherRead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanWeatherRead.swift; sourceTree = "<group>"; };
+		AF2100000000000000000006 /* NativePlanNotificationIntentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanNotificationIntentStore.swift; sourceTree = "<group>"; };
+		AF2100000000000000000007 /* NativePlanNotificationIntentHandoffCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanNotificationIntentHandoffCoordinator.swift; sourceTree = "<group>"; };
+		AF2100000000000000000008 /* NativePlanNotificationIntentStagingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanNotificationIntentStagingCoordinator.swift; sourceTree = "<group>"; };
+		AF2100000000000000000009 /* NativeLegacySourceScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLegacySourceScope.swift; sourceTree = "<group>"; };
+		AF210000000000000000000A /* NativePlanDeliveryTransferDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanDeliveryTransferDraft.swift; sourceTree = "<group>"; };
+		AF210000000000000000000B /* NativePlanDeliveryTransferReviewCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePlanDeliveryTransferReviewCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		F93300000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (F93100000000000000000002 /* MapLibre in Frameworks */, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A30000000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -305,6 +408,12 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		F93400000000000000000001 /* NearcastTests */ = {
+			isa = PBXGroup;
+			children = (F93200000000000000000001 /* NativeRadarPreviewSnapshotTests.swift */, );
+			path = NearcastTests;
+			sourceTree = "<group>";
+		};
 		AC4000000000000000000001 /* Radar Lab */ = {
 			isa = PBXGroup;
 			children = (
@@ -332,6 +441,11 @@
 				AC2000000000000000000017 /* NativeRadarMap.swift */,
 				AC2000000000000000000018 /* NativeRadarModel.swift */,
 				AC2000000000000000000019 /* NativeRadarView.swift */,
+				B72000000000000000000001 /* NativeRadarOpeningContext.swift */,
+				B72000000000000000000002 /* NativeRadarObservedRepository.swift */,
+				B72000000000000000000003 /* NativeRadarPreviewModel.swift */,
+				B72000000000000000000004 /* NativeRadarPreviewCard.swift */,
+				B72000000000000000000005 /* NativeRadarPreviewSnapshotter.swift */,
 				AC200000000000000000001A /* MRMSContract.swift */,
 				AC200000000000000000001B /* MRMSClient.swift */,
 				AC2000000000000000000002 /* RadarNumericContract.swift */,
@@ -354,9 +468,45 @@
 				AA2000000000000000000001 /* NativeWeatherPreviewContext.swift */,
 				AA2000000000000000000002 /* NativeWeatherPreviewModel.swift */,
 				AA2000000000000000000003 /* NativeWeatherForecast.swift */,
+				AA2000000000000000000025 /* NativeDayRhythmPresentation.swift */,
+				AA2000000000000000000026 /* NativeDayRhythmView.swift */,
 				AA2000000000000000000004 /* NativeForecastRepository.swift */,
 				AA2000000000000000000005 /* NativeWeatherPreviewView.swift */,
 				AA2000000000000000000015 /* NativeAtmosphericField.swift */,
+				AA2000000000000000000016 /* NativeLivingSkyScene.swift */,
+				AA2000000000000000000018 /* NativeLivingSkyMotion.swift */,
+				AA2000000000000000000019 /* NativeLivingSkyCloudMotionView.swift */,
+				AA200000000000000000001A /* NativeLivingSkyRainView.swift */,
+				AA2000000000000000000040 /* NativeSkyStars.swift */,
+				AB2000000000000000000050 /* NativePlanNotificationContract.swift */,
+				AB2000000000000000000051 /* NativePlanNotifications.swift */,
+				AB2000000000000000000052 /* NativeAskSpeechController.swift */,
+				AB2000000000000000000053 /* NativeCompanionContent.swift */,
+				AB2000000000000000000054 /* NativeLiveActivityControls.swift */,
+				AB2000000000000000000055 /* NativeStormCheck.swift */,
+				AA2000000000000000000041 /* NativeLivingSkyStarsView.swift */,
+				AA200000000000000000001B /* NativeAppRouter.swift */,
+				AA200000000000000000001C /* NativeOnlyExperienceRoot.swift */,
+				AA200000000000000000001D /* NativeAgendaRepository.swift */,
+				AA200000000000000000001E /* NativeAgendaStore.swift */,
+				AA200000000000000000001F /* NativeAgendaView.swift */,
+				AA2000000000000000000020 /* NativePlanEvidence.swift */,
+				AA2000000000000000000021 /* NativePlanEvidenceModel.swift */,
+				AA2000000000000000000022 /* NativePlanDetailView.swift */,
+				AA2000000000000000000023 /* NativePlanMigrationStore.swift */,
+				AA2000000000000000000024 /* NativeAskRead.swift */,
+				AF2100000000000000000004 /* NativeAskExperience.swift */,
+				AF2100000000000000000005 /* NativePlanWeatherRead.swift */,
+				AF2100000000000000000003 /* NativeAskConversation.swift */,
+				AF2100000000000000000002 /* NativePlansExperience.swift */,
+				AF2100000000000000000001 /* NativePlanLibrary.swift */,
+				AF2100000000000000000006 /* NativePlanNotificationIntentStore.swift */,
+				AF2100000000000000000007 /* NativePlanNotificationIntentHandoffCoordinator.swift */,
+				AF2100000000000000000008 /* NativePlanNotificationIntentStagingCoordinator.swift */,
+				AF2100000000000000000009 /* NativeLegacySourceScope.swift */,
+				AF210000000000000000000A /* NativePlanDeliveryTransferDraft.swift */,
+				AF210000000000000000000B /* NativePlanDeliveryTransferReviewCoordinator.swift */,
+				AA2000000000000000000017 /* NativeLivingSkyBackdrop.swift */,
 				AA2000000000000000000006 /* NativeWeatherOutlook.swift */,
 				AA2000000000000000000007 /* NativeWeatherEssentials.swift */,
 				AA2000000000000000000008 /* NativeEssentialsRepository.swift */,
@@ -379,6 +529,7 @@
 			children = (
 				C40000000000000000000001 /* Shared */,
 				A40000000000000000000002 /* NearcastApp */,
+				F93400000000000000000001 /* NearcastTests */,
 				AC4000000000000000000001 /* Radar Lab */,
 				B40000000000000000000001 /* NearcastWidget */,
 				D40000000000000000000001 /* NearcastWatch */,
@@ -406,6 +557,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000009 /* Nearcast.app */,
+				F93200000000000000000002 /* NearcastTests.xctest */,
 				B20000000000000000000004 /* NearcastWidgetExtension.appex */,
 				D20000000000000000000004 /* NearcastWatch.app */,
 				E20000000000000000000004 /* NearcastWatchComplications.appex */,
@@ -455,6 +607,8 @@
 				A2000000000000000000000A /* Info-Release.plist */,
 				A2000000000000000000000E /* Nearcast-Debug.entitlements */,
 				A2000000000000000000000F /* Nearcast-Release.entitlements */,
+				A20000000000000000000015 /* SunCalc-LICENSE.txt */,
+				AF2000000000000000000001 /* NativeAgendaExport.js */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -506,6 +660,21 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		F93500000000000000000001 /* NearcastTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F93900000000000000000001 /* Build configuration list for PBXNativeTarget "NearcastTests" */;
+			buildPhases = (
+				F93600000000000000000001 /* Sources */,
+				F93300000000000000000001 /* Frameworks */,
+			);
+			buildRules = ();
+			dependencies = (F93800000000000000000002 /* PBXTargetDependency */, );
+			name = NearcastTests;
+			packageProductDependencies = (F20000000000000000000004 /* MapLibre */, );
+			productName = NearcastTests;
+			productReference = F93200000000000000000002 /* NearcastTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		A50000000000000000000001 /* Nearcast */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A90000000000000000000002 /* Build configuration list for PBXNativeTarget "Nearcast" */;
@@ -596,6 +765,10 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					F93500000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = A50000000000000000000001;
+					};
 					A50000000000000000000001 = {
 						CreatedOnToolsVersion = 26.6;
 						SystemCapabilities = {
@@ -650,6 +823,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				F93500000000000000000001 /* NearcastTests */,
 				A50000000000000000000001 /* Nearcast */,
 				B50000000000000000000001 /* NearcastWidgetExtension */,
 				D50000000000000000000001 /* NearcastWatch */,
@@ -669,6 +843,8 @@
 				AC1000000000000000000009 /* MapLibre-LICENSE.md in Resources */,
 				AC100000000000000000000A /* MapLibre-core-NOTICES.md in Resources */,
 				AC100000000000000000000B /* MapLibre-iOS-NOTICES.md in Resources */,
+				A10000000000000000000013 /* SunCalc-LICENSE.txt in Resources */,
+				AF1000000000000000000001 /* NativeAgendaExport.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -697,6 +873,12 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		F93600000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (F93100000000000000000001 /* NativeRadarPreviewSnapshotTests.swift in Sources */, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A60000000000000000000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -726,6 +908,11 @@
 				AC1000000000000000000017 /* NativeRadarMap.swift in Sources */,
 				AC1000000000000000000018 /* NativeRadarModel.swift in Sources */,
 				AC1000000000000000000019 /* NativeRadarView.swift in Sources */,
+				F923ECDE8D714733BE620001 /* NativeRadarOpeningContext.swift in Sources */,
+				B71000000000000000000002 /* NativeRadarObservedRepository.swift in Sources */,
+				B71000000000000000000003 /* NativeRadarPreviewModel.swift in Sources */,
+				B71000000000000000000004 /* NativeRadarPreviewCard.swift in Sources */,
+				B71000000000000000000005 /* NativeRadarPreviewSnapshotter.swift in Sources */,
 				AC100000000000000000001A /* MRMSContract.swift in Sources */,
 				AC100000000000000000001B /* MRMSClient.swift in Sources */,
 				AC1000000000000000000002 /* RadarNumericContract.swift in Sources */,
@@ -740,6 +927,42 @@
 				AA1000000000000000000004 /* NativeForecastRepository.swift in Sources */,
 				AA1000000000000000000005 /* NativeWeatherPreviewView.swift in Sources */,
 				AA1000000000000000000015 /* NativeAtmosphericField.swift in Sources */,
+				AA1000000000000000000016 /* NativeLivingSkyScene.swift in Sources */,
+				AA1000000000000000000018 /* NativeLivingSkyMotion.swift in Sources */,
+				AA1000000000000000000019 /* NativeLivingSkyCloudMotionView.swift in Sources */,
+				AA100000000000000000001A /* NativeLivingSkyRainView.swift in Sources */,
+				AA1000000000000000000040 /* NativeSkyStars.swift in Sources */,
+				AB1000000000000000000050 /* NativePlanNotificationContract.swift in Sources */,
+				AB1000000000000000000051 /* NativePlanNotifications.swift in Sources */,
+				AB1000000000000000000052 /* NativeAskSpeechController.swift in Sources */,
+				AB1000000000000000000053 /* NativeCompanionContent.swift in Sources */,
+				AB1000000000000000000054 /* NativeLiveActivityControls.swift in Sources */,
+				AB1000000000000000000055 /* NativeStormCheck.swift in Sources */,
+				AA1000000000000000000041 /* NativeLivingSkyStarsView.swift in Sources */,
+				AA100000000000000000001B /* NativeAppRouter.swift in Sources */,
+				AA100000000000000000001C /* NativeOnlyExperienceRoot.swift in Sources */,
+				AA100000000000000000001D /* NativeAgendaRepository.swift in Sources */,
+				AA100000000000000000001E /* NativeAgendaStore.swift in Sources */,
+				AA100000000000000000001F /* NativeAgendaView.swift in Sources */,
+				AA1000000000000000000020 /* NativePlanEvidence.swift in Sources */,
+				AA1000000000000000000021 /* NativePlanEvidenceModel.swift in Sources */,
+				AA1000000000000000000022 /* NativePlanDetailView.swift in Sources */,
+				AA1000000000000000000023 /* NativePlanMigrationStore.swift in Sources */,
+				AA1000000000000000000024 /* NativeAskRead.swift in Sources */,
+				AA1000000000000000000025 /* NativeDayRhythmPresentation.swift in Sources */,
+				AA1000000000000000000026 /* NativeDayRhythmView.swift in Sources */,
+				AF1100000000000000000004 /* NativeAskExperience.swift in Sources */,
+				AF1100000000000000000005 /* NativePlanWeatherRead.swift in Sources */,
+				AF1100000000000000000003 /* NativeAskConversation.swift in Sources */,
+				AF1100000000000000000002 /* NativePlansExperience.swift in Sources */,
+				AF1100000000000000000001 /* NativePlanLibrary.swift in Sources */,
+				AF1100000000000000000006 /* NativePlanNotificationIntentStore.swift in Sources */,
+				AF1100000000000000000007 /* NativePlanNotificationIntentHandoffCoordinator.swift in Sources */,
+				AF1100000000000000000008 /* NativePlanNotificationIntentStagingCoordinator.swift in Sources */,
+				AF1100000000000000000009 /* NativeLegacySourceScope.swift in Sources */,
+				AF110000000000000000000A /* NativePlanDeliveryTransferDraft.swift in Sources */,
+				AF110000000000000000000B /* NativePlanDeliveryTransferReviewCoordinator.swift in Sources */,
+				AA1000000000000000000017 /* NativeLivingSkyBackdrop.swift in Sources */,
 				AA1000000000000000000006 /* NativeWeatherOutlook.swift in Sources */,
 				AA1000000000000000000007 /* NativeWeatherEssentials.swift in Sources */,
 				AA1000000000000000000008 /* NativeEssentialsRepository.swift in Sources */,
@@ -815,6 +1038,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		F93800000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* Nearcast */;
+			targetProxy = F93800000000000000000001 /* PBXContainerItemProxy */;
+		};
 		B80000000000000000000001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = B50000000000000000000001 /* NearcastWidgetExtension */;
@@ -833,6 +1061,60 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		F93000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks", );
+				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.dev.snapshot-tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nearcast.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nearcast";
+			};
+			name = Debug;
+		};
+		F93000000000000000000002 /* DevPerformance */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks", );
+				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.dev.snapshot-tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nearcast.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nearcast";
+			};
+			name = DevPerformance;
+		};
+		F93000000000000000000003 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks", );
+				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.snapshot-tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nearcast.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nearcast";
+			};
+			name = Release;
+		};
 		AA0000000000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -973,7 +1255,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -1006,7 +1288,7 @@
 				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Release.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
@@ -1038,7 +1320,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -1068,7 +1350,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWidget/Info.plist;
@@ -1098,7 +1380,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1131,7 +1413,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1164,7 +1446,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;
@@ -1193,7 +1475,7 @@
 				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 124;
+				CURRENT_PROJECT_VERSION = 134;
 				DEVELOPMENT_TEAM = 22PRZ6YK2P;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;
@@ -1216,13 +1498,216 @@
 			};
 			name = Release;
 		};
+		AF0000000000000000000001 /* DevPerformance */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				NEARCAST_APP_GROUP_IDENTIFIER = group.app.nearcast.ios.dev;
+				NEARCAST_COMPANION_BUNDLE_IDENTIFIER = app.nearcast.ios.dev;
+				NEARCAST_COMPLICATIONS_DISPLAY_NAME = "Nearcast Dev";
+				NEARCAST_DEFAULT_WEB_MODE = production;
+				NEARCAST_DISPLAY_NAME = "Nearcast Dev";
+				NEARCAST_REMOTE_DELIVERY_ENABLED = NO;
+				NEARCAST_URL_SCHEME = nearcast-dev;
+				NEARCAST_WATCH_REFRESH_IDENTIFIER = app.nearcast.ios.dev.watch.weather-refresh;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG NEARCAST_DEV $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = DevPerformance;
+		};
+		AF0000000000000000000002 /* DevPerformance */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "NearcastApp/Support/Nearcast-Debug.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 134;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 22PRZ6YK2P;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "NearcastApp/Support/Info-Debug.plist";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.dev;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = DevPerformance;
+		};
+		AF0000000000000000000003 /* DevPerformance */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = NearcastWidget/NearcastWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 134;
+				DEVELOPMENT_TEAM = 22PRZ6YK2P;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NearcastWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.dev.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = DevPerformance;
+		};
+		AF0000000000000000000004 /* DevPerformance */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = NearcastWatch/NearcastWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 134;
+				DEVELOPMENT_TEAM = 22PRZ6YK2P;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NearcastWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(NEARCAST_DISPLAY_NAME)";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(NEARCAST_COMPANION_BUNDLE_IDENTIFIER)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.dev.watch;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = DevPerformance;
+		};
+		AF0000000000000000000005 /* DevPerformance */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = NearcastWatchComplications/NearcastWatchComplications.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 134;
+				DEVELOPMENT_TEAM = 22PRZ6YK2P;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NearcastWatchComplications/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.nearcast.ios.dev.watch.complications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = DevPerformance;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		F93900000000000000000001 /* Build configuration list for PBXNativeTarget "NearcastTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F93000000000000000000001 /* Debug */,
+				F93000000000000000000002 /* DevPerformance */,
+				F93000000000000000000003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = DevPerformance;
+		};
 		A90000000000000000000001 /* Build configuration list for PBXProject "Nearcast" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0000000000000000000001 /* Debug */,
+				AF0000000000000000000001 /* DevPerformance */,
 				AA0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1232,6 +1717,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0000000000000000000003 /* Debug */,
+				AF0000000000000000000002 /* DevPerformance */,
 				AA0000000000000000000004 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1241,6 +1727,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				BB0000000000000000000001 /* Debug */,
+				AF0000000000000000000003 /* DevPerformance */,
 				BB0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1250,6 +1737,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				DD0000000000000000000001 /* Debug */,
+				AF0000000000000000000004 /* DevPerformance */,
 				DD0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1259,6 +1747,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				EE0000000000000000000001 /* Debug */,
+				AF0000000000000000000005 /* DevPerformance */,
 				EE0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1279,8 +1768,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/markdsparks/operon.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.4.0;
+				kind = exactVersion;
+				version = 0.4.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

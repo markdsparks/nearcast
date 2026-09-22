@@ -165,9 +165,93 @@ struct NearcastWidgetSnapshot: Codable, Sendable {
     var ownerRevision: Int? = nil
     var publicationGeneration: Int? = nil
     var nativeWeatherInvalidation: Bool? = nil
+    var weatherLocation: NearcastCompanionLocation? = nil
+    var alertLocation: NearcastCompanionLocation? = nil
+}
+
+/// Coordinates belong to each data domain, not to the phone's selection anchor.
+/// resolvedAt orders location resolutions independently of forecast issue time.
+struct NearcastCompanionLocation: Codable, Equatable, Sendable {
+    let latitude: Double
+    let longitude: Double
+    let resolvedAt: TimeInterval
+
+    var isValid: Bool {
+        latitude.isFinite && longitude.isFinite && abs(latitude) <= 90 &&
+            abs(longitude) <= 180 && resolvedAt.isFinite && resolvedAt > 0
+    }
+
+    func matches(_ other: Self, within meters: Double = 2_000) -> Bool {
+        guard isValid, other.isValid else { return false }
+        let radians = Double.pi / 180
+        let dLat = (latitude - other.latitude) * radians
+        let dLon = (longitude - other.longitude) * radians
+        let a = pow(sin(dLat / 2), 2) + cos(latitude * radians) *
+            cos(other.latitude * radians) * pow(sin(dLon / 2), 2)
+        return 6_371_000 * 2 * asin(sqrt(min(1, max(0, a)))) <= meters
+    }
 }
 
 extension NearcastWidgetSnapshot {
+    /// Persist this before a travel fetch: failure must not display origin
+    /// weather. Repeating a fetch at the same destination preserves its cache.
+    func preparingWeather(at location: NearcastCompanionLocation,
+                          selected: NearcastWidgetPlace) -> Self {
+        guard location.isValid else { return self }
+        var result = self
+        let anchor = NearcastCompanionLocation(latitude: selected.latitude,
+            longitude: selected.longitude, resolvedAt: max(1, weatherSavedTime))
+        let previous = weatherLocation ?? anchor
+        if !previous.matches(location) {
+            result.isAvailable = false
+            result.nativeWeatherInvalidation = true
+            result.weatherSavedAt = 0
+            result.temperature = 0
+            result.feelsLike = 0
+            result.wind = 0
+            result.windDirection = nil
+            result.windLabel = nil
+            result.placeTimezone = nil
+            result.timeline = nil
+            result.daily = nil
+            result.high = nil
+            result.low = nil
+            result.sunriseAt = nil
+            result.sunsetAt = nil
+            result.rainChance = 0
+            result.forecastRainChance = nil
+            result.uv = 0
+            result.precipitationNowLabel = nil
+            result.precipitationNowBasis = nil
+            result.precipitationNowObserved = false
+            result.precipitationNowDetail = nil
+            result.clearCanonicalEvent()
+            result.clearForecastConfidence()
+        }
+        // A failed repeat request must not turn GPS fixes into a breadcrumb
+        // trail that gradually moves old weather away from its source.
+        result.weatherLocation = previous.matches(location)
+            ? NearcastCompanionLocation(latitude: previous.latitude, longitude: previous.longitude,
+                resolvedAt: location.resolvedAt)
+            : location
+        if selected.tracksCurrentLocation && !anchor.matches(location) {
+            result.placeName = "Current Location"
+        }
+        result.alertLocation = alertLocation ?? anchor
+        return result.removingMismatchedAlert()
+    }
+
+    func removingMismatchedAlert() -> Self {
+        guard let weatherLocation else { return self }
+        guard let alertLocation, weatherLocation.matches(alertLocation) else {
+            var result = self
+            result.clearOfficialAlert()
+            result.alertStateReady = false // unknown is not an all-clear
+            result.alertLocation = nil
+            return result
+        }
+        return self
+    }
     // V9 is the first snapshot contract that can distinguish an absent PoP
     // from a real 0%. Older snapshots only carried the required `rainChance`
     // field, so retain that value when decoding them.
@@ -865,6 +949,7 @@ extension NearcastWidgetSnapshot {
         snapshot.alertCertainty = stored.alertCertainty
         snapshot.alertCount = stored.alertCount
         snapshot.alertSavedAt = stored.alertSavedAt
+        snapshot.alertLocation = stored.alertLocation
         return snapshot
     }
 
@@ -875,8 +960,12 @@ extension NearcastWidgetSnapshot {
         with stored: NearcastWidgetSnapshot,
         at timestamp: TimeInterval = Date().timeIntervalSince1970
     ) -> NearcastWidgetSnapshot {
-        let incoming = expiringOfficialAlert(at: timestamp)
+        let incoming = expiringOfficialAlert(at: timestamp).removingMismatchedAlert()
         let existing = stored.expiringOfficialAlert(at: timestamp)
+        if let location = incoming.weatherLocation,
+           existing.alertLocation.map({ location.matches($0) }) != true {
+            return incoming
+        }
         let incomingCheckedAt = incoming.alertSavedAt ?? 0
         let existingCheckedAt = existing.alertSavedAt ?? 0
         let shouldKeepExisting = incoming.alertStateReady != true
@@ -905,6 +994,28 @@ extension NearcastWidgetSnapshot {
     /// Keeps the receiver's incoming plan and metadata, but refuses to let an
     /// older weather payload replace a fresher observation already on Watch.
     func preservingNewerWeather(from stored: NearcastWidgetSnapshot) -> NearcastWidgetSnapshot {
+        if let oldLocation = stored.weatherLocation,
+           weatherLocation.map({ oldLocation.matches($0) }) != true {
+            // A delayed phone metadata publication cannot resurrect origin
+            // weather, even when destination weather is currently unavailable.
+            if oldLocation.isValid && oldLocation.resolvedAt >= (weatherLocation?.resolvedAt ?? 0) {
+                if hasCompatibleWeatherUnits(with: stored) { return mergingWeather(from: stored) }
+                // Keep incoming settings, but never relabel old-unit numbers
+                // or permit those settings to resurrect an origin forecast.
+                var unavailable = self
+                unavailable.weatherLocation = oldLocation
+                unavailable.placeName = stored.placeName
+                unavailable.isAvailable = false
+                unavailable.nativeWeatherInvalidation = true
+                unavailable.weatherSavedAt = 0
+                unavailable.timeline = nil
+                unavailable.daily = nil
+                unavailable.clearCanonicalEvent()
+                unavailable.clearForecastConfidence()
+                return unavailable
+            }
+            return self
+        }
         guard nativeWeatherInvalidation != true,
               hasCompatibleWeatherUnits(with: stored),
               stored.hasWeatherData,
@@ -1057,7 +1168,11 @@ extension NearcastWidgetSnapshot {
         merged.version = max(minimumVersion, max(version, weather.version))
         // A weather response must not restore an alias from an older phone
         // publication. Legacy snapshots keep their historical merge behavior.
-        merged.placeName = ownerRevision == nil ? weather.placeName : placeName
+        let changedLocation = weather.weatherLocation.map { location in
+            weatherLocation.map { location.matches($0) } != true
+        } ?? false
+        merged.placeName = ownerRevision == nil || changedLocation ? weather.placeName : placeName
+        merged.weatherLocation = weather.weatherLocation
         merged.placeTimezone = weather.placeTimezone ?? placeTimezone
         // Settings belong to the receiving (latest phone-authored) snapshot,
         // not to a weather request that may have started before they changed.
@@ -1193,7 +1308,9 @@ enum NearcastWidgetSnapshotStore {
         var place: NearcastWidgetPlace?
 
         var isCoherent: Bool {
-            guard snapshot.canReplacePublication(nil) else { return false }
+            guard snapshot.canReplacePublication(nil),
+                  snapshot.weatherLocation?.isValid != false,
+                  snapshot.alertLocation?.isValid != false else { return false }
             guard let place else { return snapshot.ownerRevision == nil || !snapshot.hasWeatherData }
             return place.ownerRevision == snapshot.ownerRevision &&
                 place.publicationGeneration == snapshot.publicationGeneration &&
@@ -1367,15 +1484,21 @@ struct NearcastWidgetPublicationFileStore {
             // marker. Actual weather must participate in freshness arbitration.
             if committed.snapshot.hasWeatherData { committed.snapshot.nativeWeatherInvalidation = false }
             if let previous, let place = committed.place, let previousPlace = previous.place,
-               place.hasSameWeatherSelection(as: previousPlace),
-               committed.snapshot.hasCompatibleWeatherUnits(with: previous.snapshot) {
+               place.hasSameWeatherSelection(as: previousPlace) {
                 // This also covers a native metadata publication built just
                 // before an extension committed fresher same-place weather.
                 // The merge retains incoming owner/plan/settings authority.
                 committed.snapshot = committed.snapshot
                     .preservingNewerWeather(from: previous.snapshot)
                     .resolvingOfficialAlert(with: previous.snapshot)
+                if let location = committed.snapshot.weatherLocation,
+                   let old = previous.snapshot.weatherLocation, location.matches(old),
+                   old.resolvedAt > location.resolvedAt {
+                    committed.snapshot.weatherLocation = NearcastCompanionLocation(
+                        latitude: location.latitude, longitude: location.longitude, resolvedAt: old.resolvedAt)
+                }
             }
+            committed.snapshot = committed.snapshot.removingMismatchedAlert()
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let data = try encoder.encode(Envelope(version: 1, publication: committed))

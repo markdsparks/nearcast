@@ -102,9 +102,16 @@ enum NativeRadarTransition {
         let observedAgeMinutes: Double
         let cycleAgeMinutes: Double
         let leadMinutes: Double
+        /// Interior blend weight. At the finite render crop's exposed edges,
+        /// original same-time model guidance smoothly replaces the enhancement.
         let forecastWeight: Double
         let confidence: Double
+        /// Final available-data coverage, including original-model edge fallback.
         let validCoverage: Double
+        /// Area supported by every translated input the interior blend requires.
+        /// This is not the provider's geographic coverage: advection can expose
+        /// a render crop edge even when the source model covers the whole view.
+        let enhancementCoverage: Double
         let alignmentCoverage: Double
         let correctionX: Double, correctionY: Double
         let correctionFactor: Double
@@ -233,18 +240,38 @@ enum NativeRadarTransition {
            blendStartMinutes: 15,
            blendCompleteMinutes: correction == nil ? 60 : 75)
         guard let composite = composites.first else { return .unavailable("composition-unavailable") }
-        var bytes = composite.frame.texture.bytes
-        var mask = [UInt8](repeating: 0, count: bytes.count)
-        var valid = 0
+        // These fields are finite local render crops, not the providers' domain
+        // boundaries. Translation can expose an unknown *enhancement* edge, but
+        // the original forecast still has genuine data there at this exact time.
+        // Keep that guidance rather than manufacturing a transparent hole and
+        // reporting it as missing forecast coverage. True source holes were
+        // rejected above and never reach this fallback.
+        var bytes = forecastTarget.texture.bytes
+        let mask = forecastTarget.validDataMask
+        var enhancementValid = 0
+        var translations: [(dx: Double, dy: Double)] = []
+        if composite.observedWeight > 0 {
+            translations.append((selectedTarget.displacementX, selectedTarget.displacementY))
+        }
+        if composite.forecastWeight > 0 {
+            translations.append((corrected.displacementX, corrected.displacementY))
+        }
         for index in bytes.indices {
             if index % anchor.texture.width == 0 { try Task.checkCancellation() }
             let validPrediction = composite.observedWeight == 0 || predicted.validDataMask[index] == 1
             let validModel = composite.forecastWeight == 0 || model.validDataMask[index] == 1
-            if validPrediction && validModel { mask[index] = 1; valid += 1 }
-            else { bytes[index] = 0 }
+            guard validPrediction && validModel else { continue }
+            enhancementValid += 1
+            let weight = enhancementEdgeWeight(column: index % anchor.texture.width,
+                row: index / anchor.texture.width, width: anchor.texture.width,
+                height: anchor.texture.height, translations: translations)
+            let original = Double(forecastTarget.texture.bytes[index])
+            let enhanced = Double(composite.frame.texture.bytes[index])
+            bytes[index] = UInt8(max(0, min(255, floor(original * (1 - weight) + enhanced * weight + 0.5))))
         }
-        let coverage = Double(valid) / Double(bytes.count)
-        guard coverage >= 0.58 else { return .unavailable("composite-coverage-too-small") }
+        let enhancementCoverage = Double(enhancementValid) / Double(bytes.count)
+        guard enhancementCoverage >= 0.58 else { return .unavailable("composite-coverage-too-small") }
+        let coverage = Double(mask.reduce(0) { $0 + Int($1) }) / Double(mask.count)
         let texture = try RadarNumericContract.Texture(width: anchor.texture.width, height: anchor.texture.height, bytes: bytes)
         let frame = try Frame(texture: texture, bounds: anchor.bounds, encoding: anchor.encoding,
             validTime: forecastTarget.validTime, validDataMask: mask)
@@ -253,11 +280,29 @@ enum NativeRadarTransition {
             targetValidTime: forecastTarget.validTime, observedAgeMinutes: readiness.observedAgeMinutes,
             cycleAgeMinutes: readiness.cycleAgeMinutes, leadMinutes: composite.leadMinutes,
             forecastWeight: composite.forecastWeight, confidence: composite.confidence,
-            validCoverage: coverage, alignmentCoverage: rect.coverage(width: anchor.texture.width, height: anchor.texture.height),
+            validCoverage: coverage, enhancementCoverage: enhancementCoverage,
+            alignmentCoverage: rect.coverage(width: anchor.texture.width, height: anchor.texture.height),
             correctionX: corrected.displacementX, correctionY: corrected.displacementY,
             correctionFactor: corrected.correctionFactor, modelAligned: correction != nil, motion: motion),
             prepared: Prepared(observed: observed.sorted { $0.validTimeMilliseconds < $1.validTimeMilliseconds },
                 forecastAnchor: forecastAnchor, cycleTime: cycleTime, motion: motion, correction: correction)))
+    }
+
+    /// An eight-pixel smoothstep is bounded, spatially stable between frames,
+    /// and leaves the enhanced interior byte-for-byte unchanged. Only sides
+    /// newly exposed by translation feather; unchanged crop sides do not fade.
+    private static func enhancementEdgeWeight(column: Int, row: Int, width: Int, height: Int,
+                                               translations: [(dx: Double, dy: Double)]) -> Double {
+        let featherPixels = 8.0
+        var distance = featherPixels
+        for shift in translations {
+            if shift.dx > 0 { distance = min(distance, Double(column) - shift.dx) }
+            else if shift.dx < 0 { distance = min(distance, Double(width - 1 - column) + shift.dx) }
+            if shift.dy > 0 { distance = min(distance, Double(row) - shift.dy) }
+            else if shift.dy < 0 { distance = min(distance, Double(height - 1 - row) + shift.dy) }
+        }
+        let t = max(0, min(1, distance / featherPixels))
+        return t * t * (3 - 2 * t)
     }
 
     private struct Rectangle {
