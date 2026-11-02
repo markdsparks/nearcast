@@ -62,6 +62,18 @@ try {
   const stored = rows.get(nativeKey);
   assert.equal(stored.client.owner, "native-v1");
   assert.equal(stored.plans[0].timezone, "America/Los_Angeles", "plan timezone survives a different device timezone");
+  const notificationPolicy = { quietStart: 21, quietEnd: 8, minimumIntervalMinutes: 360 };
+  const policyRegistration = await register({ nativeChannel, client: { ...client, notificationPolicy }, plans: [plan] });
+  assert.equal(policyRegistration.body.notificationPolicyVersion, 1, "receipt acknowledges delivery policy support");
+  assert.deepEqual(rows.get(nativeKey).client.notificationPolicy, notificationPolicy);
+  rows.get(nativeKey).lastRoutineSentAt = new Date().toISOString();
+  const previousDelivery = rows.get(nativeKey).lastRoutineSentAt;
+  await register({ nativeChannel, client: { ...client, notificationPolicy }, plans: [plan] });
+  assert.equal(rows.get(nativeKey).lastRoutineSentAt, previousDelivery, "registration cannot reset the notification cooldown");
+  const policyBeforeInvalid = structuredClone(rows.get(nativeKey));
+  const invalidPolicy = await register({ nativeChannel, client: { ...client, notificationPolicy: { ...notificationPolicy, quietEnd: 24 } }, plans: [plan] });
+  assert.equal(invalidPolicy.status, 400);
+  assert.deepEqual(rows.get(nativeKey), policyBeforeInvalid, "invalid preferences cannot overwrite enrollment");
   const again = await register({ nativeChannel, client, plans: [{ ...plan, title: "Soccer updated" }] });
   assert.equal(again.body.subscriptionId, native.body.subscriptionId, "same native enrollment is idempotent");
   assert.equal(rows.get(nativeKey).plans[0].title, "Soccer updated");

@@ -40,6 +40,8 @@ run_portable_checks() {
   for smoke in \
     weather-truth-fixtures.mjs \
     plan-watch-receipt-smoke.mjs \
+    native-plan-notification-owner-test.mjs \
+    native-selective-notifications-test.mjs \
     material-event-surfaces-smoke.mjs \
     product-activation-smoke.mjs \
     ai-operon-smoke.mjs \

@@ -299,6 +299,7 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
     provider: PLAN_WATCH_PROVIDER,
     version: 1,
     nativeOwnerScopes: ["native-v1"],
+    nativeNotificationPolicyVersion: 1,
     checkedAt: new Date().toISOString(),
     push: {
       state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
@@ -639,6 +640,10 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
   if (!normalizedPlans.length && !normalizedPlaces.length) {
     return jsonResponse({ ok: false, error: "missing-watch-target" }, { status: 400 });
   }
+  if (payload?.client?.notificationPolicy != null &&
+      (owner !== "native-v1" || !normalizeNativeNotificationPolicy(payload.client.notificationPolicy))) {
+    return jsonResponse({ ok: false, error: "invalid-notification-policy" }, { status: 400 });
+  }
   const normalizedClient = normalizePlanWatchClient(payload.client);
   if (!normalizedClient.timezone) {
     return jsonResponse({ ok: false, error: "invalid-client-timezone" }, { status: 400 });
@@ -727,6 +732,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
       normalizedPlaces,
       existingRecord?.places
     ),
+    ...(existingRecord?.lastRoutineSentAt ? { lastRoutineSentAt: existingRecord.lastRoutineSentAt } : {}),
     registeredAt: existingRecord?.registeredAt || now.toISOString(),
     updatedAt: now.toISOString(),
     expiresAt
@@ -749,6 +755,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     reason: deliveryReady ? "" : nativeDeliveryReady ? "web-push-not-configured" : "native-push-not-configured",
     subscriptionId,
     ...(owner ? { owner } : {}),
+    ...(client.notificationPolicy ? { notificationPolicyVersion: 1 } : {}),
     planCount: record.plans.length,
     placeCount: record.places.length,
     expiresAt
@@ -2853,6 +2860,8 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     if (options.dryRun) {
       result.sent = 0;
       result.reasons.push(`dry-run:${top.type}`);
+    } else if (planWatchCandidateInCooldown(record, top)) {
+      result.reasons.push(`routine-cooldown:${top.type}`);
     } else if (planWatchCandidateInQuietHours(record, top, env)) {
       result.reasons.push(`quiet-hours:${top.type}`);
     } else {
@@ -2898,6 +2907,7 @@ async function evaluatePlanWatchSubscription(record, store, env = {}, options = 
     result.updated = Math.max(0, result.updated - result.deferred);
     const nextRecord = {
       ...record,
+      ...(result.sent && record?.client?.owner === "native-v1" && !planWatchCandidateIsUrgent(top) ? { lastRoutineSentAt: new Date().toISOString() } : {}),
       plans: persisted.plans,
       places: persisted.places,
       ...(options.urgentOnly
@@ -2917,7 +2927,9 @@ export function planWatchCandidateIsUrgent(candidate = {}) {
 }
 
 export function planWatchCandidateInQuietHours(record = {}, candidate = {}, env = {}, now = new Date()) {
-  const quiet = configuredPlanWatchQuietHours(env);
+  const configured = configuredPlanWatchQuietHours(env);
+  const policy = record?.client?.owner === "native-v1" ? normalizeNativeNotificationPolicy(record.client.notificationPolicy) : null;
+  const quiet = policy ? { ...configured, start: policy.quietStart, end: policy.quietEnd } : configured;
   const bypassesQuietHours = planWatchCandidateIsUrgent(candidate) &&
     Number(candidate.priority || 0) >= quiet.bypassPriority;
   if (quiet.start === quiet.end || bypassesQuietHours) return false;
@@ -2938,6 +2950,23 @@ export function planWatchCandidateInQuietHours(record = {}, candidate = {}, env 
   return quiet.start < quiet.end
     ? hour >= quiet.start && hour < quiet.end
     : hour >= quiet.start || hour < quiet.end;
+}
+
+export function normalizeNativeNotificationPolicy(value) {
+  if (!value || typeof value !== "object" ||
+      !Number.isInteger(value.quietStart) || value.quietStart < 0 || value.quietStart > 23 ||
+      !Number.isInteger(value.quietEnd) || value.quietEnd < 0 || value.quietEnd > 23 ||
+      ![60, 180, 360].includes(value.minimumIntervalMinutes)) return null;
+  return { quietStart: value.quietStart, quietEnd: value.quietEnd, minimumIntervalMinutes: value.minimumIntervalMinutes };
+}
+
+export function planWatchCandidateInCooldown(record = {}, candidate = {}, now = new Date()) {
+  if (record?.client?.owner !== "native-v1" || planWatchCandidateIsUrgent(candidate)) return false;
+  const policy = normalizeNativeNotificationPolicy(record.client.notificationPolicy);
+  if (!policy) return false;
+  const sent = Date.parse(record.lastRoutineSentAt || "");
+  const elapsed = new Date(now).getTime() - sent;
+  return Number.isFinite(elapsed) && elapsed >= 0 && elapsed < policy.minimumIntervalMinutes * 60_000;
 }
 
 async function planWatchDeliveryFingerprint(record = {}, candidate = {}) {
@@ -4549,6 +4578,8 @@ function normalizePlanWatchClient(value = {}) {
   const timezone = cleanText(source.timezone, 80);
   return {
     ...(source.owner === "native-v1" ? { owner: "native-v1" } : {}),
+    ...(source.owner === "native-v1" && normalizeNativeNotificationPolicy(source.notificationPolicy)
+      ? { notificationPolicy: normalizeNativeNotificationPolicy(source.notificationPolicy) } : {}),
     appVersion: cleanText(source.appVersion, 24),
     locale: cleanText(source.locale, 48),
     timezone: validTimeZone(timezone) ? timezone : "",
