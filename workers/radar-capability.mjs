@@ -300,6 +300,7 @@ export async function handlePlanWatchNotificationConfigRequest(request, env = {}
     version: 1,
     nativeOwnerScopes: ["native-v1"],
     nativeNotificationPolicyVersion: 1,
+    nativeSavedPlaceWatchesVersion: 1,
     checkedAt: new Date().toISOString(),
     push: {
       state: publicKey && privateKey ? "ready" : publicKey ? "missing-vapid-private-key" : "missing-vapid-key",
@@ -636,7 +637,13 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
       new Set(normalizedPlans.map((plan) => plan.id)).size !== normalizedPlans.length)) {
     return jsonResponse({ ok: false, error: "invalid-native-plans" }, { status: 400 });
   }
-  const normalizedPlaces = normalizePlanWatchPlaces(payload.places, env);
+  const normalizedPlaces = normalizePlanWatchPlaces(payload.places, env, owner);
+  if (owner === "native-v1" && (payload.places != null && (!Array.isArray(payload.places) ||
+      normalizedPlaces.length !== payload.places.length ||
+      new Set(normalizedPlaces.map((place) => place.id)).size !== normalizedPlaces.length ||
+      new Set(normalizedPlaces.map((place) => `${place.place.latitude},${place.place.longitude}`)).size !== normalizedPlaces.length))) {
+    return jsonResponse({ ok: false, error: "invalid-native-places" }, { status: 400 });
+  }
   if (!normalizedPlans.length && !normalizedPlaces.length) {
     return jsonResponse({ ok: false, error: "missing-watch-target" }, { status: 400 });
   }
@@ -730,7 +737,8 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     ),
     places: mergePlanWatchPlacesWithExisting(
       normalizedPlaces,
-      existingRecord?.places
+      existingRecord?.places,
+      { native: owner === "native-v1", resetBaseline: clientUnitChanged }
     ),
     ...(existingRecord?.lastRoutineSentAt ? { lastRoutineSentAt: existingRecord.lastRoutineSentAt } : {}),
     registeredAt: existingRecord?.registeredAt || now.toISOString(),
@@ -758,6 +766,7 @@ export async function handlePlanWatchNotificationRegisterRequest(request, env = 
     ...(client.notificationPolicy ? { notificationPolicyVersion: 1 } : {}),
     planCount: record.plans.length,
     placeCount: record.places.length,
+    ...(owner === "native-v1" && record.places.length ? { placeWatchVersion: 1 } : {}),
     expiresAt
   });
 }
@@ -3144,7 +3153,7 @@ function preserveSavedPlaceAlertBaseline(days = [], previousLastKnown = {}) {
   });
 }
 
-async function evaluateSavedPlaceWatch(watchedPlace, record = {}, context = {}) {
+export async function evaluateSavedPlaceWatch(watchedPlace, record = {}, context = {}) {
   if (!watchedPlace?.place) return { place: watchedPlace, updated: false, candidate: null };
   if (context.urgentOnly) return evaluateUrgentSavedPlaceAlert(watchedPlace, record, context);
   const unit = record?.client?.unit === "celsius" ? "celsius" : "fahrenheit";
@@ -3153,17 +3162,25 @@ async function evaluateSavedPlaceWatch(watchedPlace, record = {}, context = {}) 
   if (alertState.readiness === "error") {
     return { place: watchedPlace, updated: false, candidate: null, error: "official-alert-fetch-error", alertReadiness: "error" };
   }
-  const current = savedPlaceWatchCurrentState(watchedPlace, forecast, alertState, unit);
-  const change = savedPlaceWatchStateChange(watchedPlace.lastKnown, current);
+  const native = record?.client?.owner === "native-v1";
+  const current = savedPlaceWatchCurrentState(watchedPlace, forecast, alertState, unit, native, context.now);
+  if (native && !current.snapshot) return { place: watchedPlace, updated: false, candidate: null, error: "forecast-window-unavailable", alertReadiness: alertState.readiness };
+  let change = savedPlaceWatchStateChange(watchedPlace.lastKnown, current);
+  if (native && !change?.notify) {
+    const previousDays = normalizePlanWatchSnapshot(watchedPlace.lastKnown?.snapshot)?.days || [];
+    const initialWarning = current.snapshot.days.find((day) => day.alertTone === "warning" &&
+      !previousDays.some((prior) => prior.date === day.date && prior.alertTone === day.alertTone && prior.alertEvent === day.alertEvent));
+    if (initialWarning) change = savedPlaceWatchDayChange(current.snapshot, { ...initialWarning, alertTone: "", alertEvent: "" }, initialWarning);
+  }
   const lastKnown = savedPlaceWatchLastKnownFromState(watchedPlace, current, change);
-  const nextPlace = change?.updateBaseline ? { ...watchedPlace, lastKnown } : {
+  const nextPlace = change?.updateBaseline ? { ...watchedPlace, ...(native && validTimeZone(forecast.timezone) ? { timezone: forecast.timezone } : {}), lastKnown } : {
     ...watchedPlace,
     lastKnown: {
       ...(watchedPlace.lastKnown || {}),
       checkedAt: new Date().toISOString()
     }
   };
-  const candidate = change?.notify ? savedPlaceWatchNotificationCandidate(watchedPlace, current, change) : null;
+  const candidate = change?.notify ? savedPlaceWatchNotificationCandidate(watchedPlace, current, change, record?.client?.owner === "native-v1") : null;
   return {
     place: nextPlace,
     updated: Boolean(change?.updateBaseline),
@@ -3172,7 +3189,7 @@ async function evaluateSavedPlaceWatch(watchedPlace, record = {}, context = {}) 
   };
 }
 
-async function evaluateUrgentSavedPlaceAlert(watchedPlace, record = {}, context = {}) {
+export async function evaluateUrgentSavedPlaceAlert(watchedPlace, record = {}, context = {}) {
   const alertState = await cachedPlanWatchAlerts(watchedPlace.place, context);
   if (alertState.readiness === "error") {
     return { place: watchedPlace, updated: false, candidate: null, error: "official-alert-fetch-error", alertReadiness: "error" };
@@ -3180,8 +3197,15 @@ async function evaluateUrgentSavedPlaceAlert(watchedPlace, record = {}, context 
   if (alertState.readiness !== "supported") {
     return { place: watchedPlace, updated: false, candidate: null, alertReadiness: alertState.readiness };
   }
-  const timezone = record?.client?.timezone;
-  const dates = planWatchDatesForTimeZone(timezone, 2);
+  let timezone = record?.client?.timezone;
+  if (record?.client?.owner === "native-v1") {
+    timezone = watchedPlace.timezone;
+    if (!validTimeZone(timezone)) {
+      const forecast = await cachedPlanWatchForecast(watchedPlace.place, record?.client?.unit || "fahrenheit", context);
+      timezone = forecast?.timezone;
+    }
+  }
+  const dates = planWatchDatesForTimeZone(timezone, 2, context.now ? new Date(context.now) : new Date());
   if (dates.length !== 2) {
     return { place: watchedPlace, updated: false, candidate: null, error: "official-alert-timezone-error", alertReadiness: "error" };
   }
@@ -3201,6 +3225,7 @@ async function evaluateUrgentSavedPlaceAlert(watchedPlace, record = {}, context 
   });
   const snapshot = {
     ...(previous || {}),
+    ...(record?.client?.owner === "native-v1" ? { timezone } : {}),
     placeId: watchedPlace.id || "",
     placeName: watchedPlace.place?.name || "Saved place",
     unit: record?.client?.unit === "celsius" ? "celsius" : "fahrenheit",
@@ -3225,22 +3250,26 @@ async function evaluateUrgentSavedPlaceAlert(watchedPlace, record = {}, context 
   return {
     place: change?.updateBaseline ? { ...watchedPlace, lastKnown } : watchedPlace,
     updated: Boolean(change?.updateBaseline),
-    candidate: change?.notify ? savedPlaceWatchNotificationCandidate(watchedPlace, current, change) : null,
+    candidate: change?.notify ? savedPlaceWatchNotificationCandidate(watchedPlace, current, change, record?.client?.owner === "native-v1") : null,
     alertReadiness: "supported"
   };
 }
 
-function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alertState = {}, unit = "fahrenheit") {
+function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alertState = {}, unit = "fahrenheit", native = false, now = Date.now()) {
   const place = watchedPlace.place || {};
+  const dates = native ? planWatchDatesForTimeZone(forecast.timezone, 2, new Date(now)) : null;
+  if (native && (dates.length !== 2 || dates.some((date, index) => forecast.daily?.time?.[index] !== date))) return { snapshot: null };
   const days = [0, 1]
-    .map((dayIndex) => savedPlaceWatchDayStats(forecast, dayIndex, alertState.alerts || [], unit))
+    .map((dayIndex) => savedPlaceWatchDayStats(forecast, dayIndex, alertState.alerts || [], unit, native, now))
     .filter(Boolean);
+  if (native && days.length !== 2) return { snapshot: null };
   if (!days.length) return { snapshot: null };
   const placeName = place.name || "Saved place";
   const snapshot = {
     placeId: watchedPlace.id || "",
     placeName,
     unit,
+    ...(native ? { nativePlaceWatch: true, checkedAt: now, timezone: forecast.timezone } : {}),
     alertReadiness: cleanToken(alertState.readiness || "unknown", 24),
     days: alertState.readiness === "supported"
       ? days
@@ -3257,17 +3286,36 @@ function savedPlaceWatchCurrentState(watchedPlace = {}, forecast = {}, alertStat
   };
 }
 
-function savedPlaceWatchDayStats(forecast = {}, dayIndex = 0, alerts = [], unit = "fahrenheit") {
+function savedPlaceWatchDayStats(forecast = {}, dayIndex = 0, alerts = [], unit = "fahrenheit", native = false, now = Date.now()) {
   const daily = forecast?.daily || {};
   const hourly = forecast?.hourly || {};
   const date = Array.isArray(daily.time) ? cleanText(daily.time[dayIndex], 16) : "";
   if (!date) return null;
-  const hourlyIndexes = Array.isArray(hourly.time)
+  let hourlyIndexes = Array.isArray(hourly.time)
     ? hourly.time.reduce((indexes, time, index) => {
         if (String(time || "").startsWith(date)) indexes.push(index);
         return indexes;
       }, [])
     : [];
+  if (native) {
+    if (!validTimeZone(forecast.timezone) || !hourlyIndexes.length) return null;
+    hourlyIndexes = hourlyIndexes.filter((index) => {
+      const start = planWatchZonedDateHourMs(date, planWatchLocalHour(hourly.time[index]), forecast.timezone);
+      return Number.isFinite(start) && start + 3600_000 > now;
+    });
+    if (!hourlyIndexes.length) return null;
+    const sampleTimes = hourlyIndexes.map((index) => planWatchZonedDateHourMs(date, planWatchLocalHour(hourly.time[index]), forecast.timezone));
+    if (new Set(sampleTimes).size !== sampleTimes.length) return null;
+    for (let hour = 0; hour < 24; hour += 1) {
+      const timestamp = planWatchZonedDateHourMs(date, hour, forecast.timezone);
+      if (Number.isFinite(timestamp) && timestamp + 3600_000 > now && !sampleTimes.includes(timestamp)) return null;
+    }
+    for (const key of ["temperature_2m", "apparent_temperature", "precipitation_probability", "precipitation", "wind_gusts_10m", "weather_code"]) {
+      if (hourlyIndexes.some((index) => typeof hourly[key]?.[index] !== "number" || !Number.isFinite(hourly[key][index]))) return null;
+    }
+    if (hourlyIndexes.some((index) => hourly.precipitation_probability[index] < 0 || hourly.precipitation_probability[index] > 100 ||
+        hourly.precipitation[index] < 0 || hourly.wind_gusts_10m[index] < 0 || hourly.weather_code[index] < 0 || hourly.weather_code[index] > 99)) return null;
+  }
   const dayValue = (key, fallback = 0) => Array.isArray(daily?.[key])
     ? finiteNumber(daily[key][dayIndex], fallback)
     : fallback;
@@ -3287,14 +3335,24 @@ function savedPlaceWatchDayStats(forecast = {}, dayIndex = 0, alerts = [], unit 
     ? hourlyIndexes.map((index) => Number(hourly.weather_code?.[index])).filter(Number.isFinite)
     : [dayValue("weather_code", 0)];
   const offset = finiteNumber(forecast.utc_offset_seconds, 0) * 1000;
-  const startMs = planWatchLocalDateHourMs(date, 0, offset);
-  const endMs = planWatchLocalDateHourMs(date, 24, offset);
+  const civilWindow = native ? planWatchDateWindowForTimeZone(date, forecast.timezone) : null;
+  const startMs = native ? Math.max(civilWindow?.startMs || 0, now) : planWatchLocalDateHourMs(date, 0, offset);
+  const endMs = native ? civilWindow?.endMs : planWatchLocalDateHourMs(date, 24, offset);
+  if (native && (!civilWindow || !Number.isFinite(endMs) || endMs <= startMs)) return null;
   const alert = topPlanWatchAlert(alerts, startMs, endMs);
   const alertTone = planWatchAlertTone(alert);
   return {
     date,
     label: dayIndex === 0 ? "today" : "tomorrow",
     rainChance: roundNumber(Math.max(...rain)),
+    ...(native ? { nativeHours: hourlyIndexes.map((index) => ({
+      time: planWatchZonedDateHourMs(date, planWatchLocalHour(hourly.time[index]), forecast.timezone),
+      rain: hourly.precipitation_probability[index], feels: hourly.apparent_temperature[index],
+      gust: hourly.wind_gusts_10m[index], storm: hourly.weather_code[index] >= 95
+    })), rainStartAt: (() => {
+      const first = hourlyIndexes.find((index) => hourly.precipitation_probability[index] >= 60);
+      return first == null ? null : planWatchZonedDateHourMs(date, planWatchLocalHour(hourly.time[first]), forecast.timezone);
+    })() } : {}),
     precipTotal: roundNumber(precip.reduce((sum, item) => sum + Number(item || 0), 0), unit === "fahrenheit" ? 2 : 1),
     tempMin: roundNumber(Math.min(...temps)),
     tempMax: roundNumber(Math.max(...temps)),
@@ -3347,6 +3405,9 @@ function savedPlaceWatchStateChange(previousLastKnown = {}, current = {}) {
     return { type: "place-baseline", notify: false, updateBaseline: true, priority: 0 };
   }
 
+  if (currentSnapshot.nativePlaceWatch && previous.unit !== currentSnapshot.unit) {
+    return { type: "place-baseline-units", notify: false, updateBaseline: true, priority: 0 };
+  }
   let sawComparableDay = false;
   let missingCurrentDayBaseline = false;
   const changes = [];
@@ -3357,7 +3418,22 @@ function savedPlaceWatchStateChange(previousLastKnown = {}, current = {}) {
       continue;
     }
     sawComparableDay = true;
-    const change = savedPlaceWatchDayChange(currentSnapshot, previousDay, day);
+    let before = previousDay, after = day;
+    if (currentSnapshot.nativePlaceWatch) {
+      const oldHours = new Map((previousDay.nativeHours || []).map((hour) => [hour.time, hour]));
+      const common = (day.nativeHours || []).filter((hour) => oldHours.has(hour.time));
+      if (!common.length) { missingCurrentDayBaseline = true; continue; }
+      const stats = (base, hours) => ({ ...base,
+        rainChance: roundNumber(Math.max(...hours.map((hour) => hour.rain))),
+        feelsMax: roundNumber(Math.max(...hours.map((hour) => hour.feels))),
+        gustMax: roundNumber(Math.max(...hours.map((hour) => hour.gust))),
+        stormPotential: hours.some((hour) => hour.storm),
+        rainStartAt: hours.find((hour) => hour.rain >= 60)?.time ?? null
+      });
+      before = stats(previousDay, common.map((hour) => oldHours.get(hour.time)));
+      after = stats(day, common);
+    }
+    const change = savedPlaceWatchDayChange(currentSnapshot, before, after);
     if (change?.notify || change?.updateBaseline) changes.push(change);
   }
   if (!sawComparableDay) {
@@ -3433,6 +3509,15 @@ function savedPlaceWatchDayChange(snapshot = {}, previous = {}, current = {}) {
       body: `Rain chance dropped to ${current.rainChance}%, from ${previous.rainChance}%.`,
       day: current
     };
+  }
+
+  if (snapshot.nativePlaceWatch && Number.isFinite(previous.rainStartAt) && Number.isFinite(current.rainStartAt) &&
+      previous.rainStartAt > snapshot.checkedAt && current.rainStartAt > snapshot.checkedAt &&
+      Math.abs(current.rainStartAt - previous.rainStartAt) >= 2 * 3600_000) {
+    const hours = Math.round(Math.abs(current.rainStartAt - previous.rainStartAt) / 3600_000);
+    return { type: "place-rain-timing", tone: "caution", notify: true, updateBaseline: true, priority: 80,
+      title: `${placeName}: rain risk shifted ${current.label}`,
+      body: `The first forecast hour with at least a 60% rain chance moved about ${hours} hours ${current.rainStartAt < previous.rainStartAt ? "earlier" : "later"}.`, day: current };
   }
 
   const seriousHeat = snapshot.unit === "celsius" ? 38 : 100;
@@ -3528,11 +3613,11 @@ function savedPlaceWatchNotificationRoute(change = {}, current = {}) {
   return { target: "watching", detail: "", timeScope: dayLabel || "" };
 }
 
-function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}) {
+function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}, native = false) {
   const id = cleanToken(watchedPlace.id, 80);
   const signal = change.type || current.signal || "place-watch";
   const route = savedPlaceWatchNotificationRoute(change, current);
-  return {
+  const candidate = {
     type: signal,
     priority: change.priority || 50,
     notification: {
@@ -3560,6 +3645,17 @@ function savedPlaceWatchNotificationCandidate(watchedPlace, current, change = {}
       source: "place-watch-evaluator"
     }
   };
+  if (native) {
+    const target = route.target === "alerts" ? "map" : route.target === "place-hourly" ? "hourly" : "today";
+    const url = new URL(candidate.notification.url, "https://getnearcast.app");
+    url.searchParams.set("target", target);
+    if (change.day?.date) url.searchParams.set("date", change.day.date);
+    if (validTimeZone(current.snapshot?.timezone)) url.searchParams.set("timezone", current.snapshot.timezone);
+    url.searchParams.set("lat", String(watchedPlace.place.latitude));
+    url.searchParams.set("lon", String(watchedPlace.place.longitude));
+    candidate.notification = { ...candidate.notification, target, url: url.toString() };
+  }
+  return candidate;
 }
 
 function planWatchPlanIsPast(plan) {
@@ -4605,11 +4701,11 @@ function normalizePlanWatchPlans(value, env = {}, owner) {
     .filter(Boolean);
 }
 
-function normalizePlanWatchPlaces(value, env = {}) {
+function normalizePlanWatchPlaces(value, env = {}, owner) {
   if (!Array.isArray(value)) return [];
   return value
     .slice(0, configuredPlanWatchMaxPlacesPerSubscription(env))
-    .map(normalizePlanWatchWatchedPlace)
+    .map((place) => normalizePlanWatchWatchedPlace(place, owner))
     .filter(Boolean);
 }
 
@@ -4650,20 +4746,23 @@ function mergePlanWatchPlansWithExisting(plans = [], existingPlans = [], options
   });
 }
 
-function normalizePlanWatchWatchedPlace(value) {
+function normalizePlanWatchWatchedPlace(value, owner) {
   if (!value || typeof value !== "object") return null;
   const place = normalizePlanWatchPlace(value.place || value);
   if (!place) return null;
   const id = cleanText(value.id || planWatchPlaceStableId(place), 96);
   if (!id) return null;
+  const native = owner === "native-v1";
+  if (native && (value.id !== id || value.timezone != null && !validTimeZone(value.timezone))) return null;
   return {
     id,
     place,
-    lastKnown: normalizePlanWatchLastKnown(value.lastKnown)
+    ...(native && value.timezone ? { timezone: value.timezone } : {}),
+    lastKnown: normalizePlanWatchLastKnown(native ? undefined : value.lastKnown)
   };
 }
 
-function mergePlanWatchPlacesWithExisting(places = [], existingPlaces = []) {
+function mergePlanWatchPlacesWithExisting(places = [], existingPlaces = [], options = {}) {
   const existingById = new Map((Array.isArray(existingPlaces) ? existingPlaces : [])
     .filter(Boolean)
     .map((place) => [place.id, place]));
@@ -4672,7 +4771,11 @@ function mergePlanWatchPlacesWithExisting(places = [], existingPlaces = []) {
     const hasIncomingSnapshot = Boolean(place?.lastKnown?.snapshot);
     return {
       ...place,
-      lastKnown: hasIncomingSnapshot ? place.lastKnown : (existing?.lastKnown || place.lastKnown)
+      ...(options.native && !place.timezone && existing?.place?.latitude === place.place.latitude && existing?.place?.longitude === place.place.longitude && existing.timezone ? { timezone: existing.timezone } : {}),
+      lastKnown: options.native
+        ? (!options.resetBaseline && existing?.place?.latitude === place.place.latitude && existing?.place?.longitude === place.place.longitude &&
+           (!place.timezone || (existing?.timezone || "") === place.timezone) ? existing.lastKnown : place.lastKnown)
+        : hasIncomingSnapshot ? place.lastKnown : (existing?.lastKnown || place.lastKnown)
     };
   });
 }
@@ -4837,6 +4940,8 @@ function normalizePlanWatchSnapshot(value) {
     placeId: cleanText(value.placeId, 96),
     placeName: cleanText(value.placeName, 120),
     unit: cleanToken(value.unit, 16),
+    nativePlaceWatch: value.nativePlaceWatch === true,
+    timezone: validTimeZone(value.timezone) ? value.timezone : "",
     title: cleanText(value.title, 120),
     targetDate: cleanText(value.targetDate, 16),
     startHour: finiteNumber(value.startHour, null),
@@ -4884,6 +4989,10 @@ function normalizePlanWatchSnapshotDays(value) {
       date: cleanText(source.date, 16),
       label: cleanToken(source.label, 24),
       rainChance: finiteNumber(source.rainChance, null),
+      rainStartAt: source.rainStartAt == null ? null : finiteNumber(source.rainStartAt, null),
+      nativeHours: Array.isArray(source.nativeHours) ? source.nativeHours.slice(0, 25).filter((hour) =>
+        [hour?.time, hour?.rain, hour?.feels, hour?.gust].every((value) => typeof value === "number" && Number.isFinite(value))
+      ).map((hour) => ({time:hour.time,rain:hour.rain,feels:hour.feels,gust:hour.gust,storm:hour.storm === true})) : [],
       precipTotal: finiteNumber(source.precipTotal, null),
       tempMin: finiteNumber(source.tempMin, null),
       tempMax: finiteNumber(source.tempMax, null),
